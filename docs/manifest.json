@@ -1,0 +1,20 @@
+{
+  "name": "APC UPS Sentinel \u2014 ESP32-S3",
+  "version": "v0.1.0",
+  "build": "nvs-provisioning-initial",
+  "chipFamily": "ESP32-S3",
+  "parts": [
+    {
+      "path": "../binaries-esp32s3/bootloader.bin",
+      "offset": 0
+    },
+    {
+      "path": "../binaries-esp32s3/partition-table.bin",
+      "offset": 32768
+    },
+    {
+      "path": "../binaries-esp32s3/apc_usb_mqtt_bridge.bin",
+      "offset": 65536
+    }
+  ]
+}

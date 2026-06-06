@@ -4,5 +4,7 @@ sdkconfig.old
 *.o
 *.elf
 *.bin
+!binaries-esp32s3/
+!binaries-esp32s3/*.bin
 *.map
 managed_components/

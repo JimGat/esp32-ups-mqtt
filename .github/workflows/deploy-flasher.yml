@@ -1,0 +1,51 @@
+name: Deploy Web Flasher
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docs/**"
+      - "binaries-esp32s3/*.bin"
+      - ".github/workflows/deploy-flasher.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build site
+        run: |
+          mkdir -p _site/binaries-esp32s3
+          sed 's|"\.\./binaries-esp32s3/|"binaries-esp32s3/|g' docs/manifest.json > _site/manifest.json
+          sed 's|"\.\./binaries-esp32s3/|"binaries-esp32s3/|g' docs/index.html > _site/index.html
+          cp binaries-esp32s3/*.bin _site/binaries-esp32s3/
+          for f in docs/*.png docs/*.jpg docs/*.gif docs/*.svg; do
+            [ -f "$f" ] && cp "$f" _site/
+          done
+          find _site -type f | sort
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "_site"
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

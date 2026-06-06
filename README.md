@@ -1,8 +1,8 @@
 # esp32-apc-ups-mqtt
 
-JimGat clean-room public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc).
+A JimGat Lab ESP32-S3 APC UPS sentinel: USB-HID UPS telemetry in, MQTT power intelligence out.
 
-This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection.
+This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc), with attribution preserved but without carrying upstream local configuration history into this repo.
 
 ## JimGat fork changes
 
@@ -22,6 +22,28 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
 6. Save. The device stores settings in NVS and reboots into station mode.
 
 No site Wi-Fi or MQTT credentials are stored in source, `sdkconfig.defaults`, or firmware defaults.
+
+## Browser web flasher
+
+This repo includes a Dexter-lab themed browser flasher under `docs/`, adapted from the CYM-NM28C5 web flasher pattern. It is intended for GitHub Pages and desktop Chrome/Edge with Web Serial enabled.
+
+Flash package layout:
+
+| File | Offset | Purpose |
+|------|--------|---------|
+| `binaries-esp32s3/bootloader.bin` | `0x0` | ESP32-S3 bootloader |
+| `binaries-esp32s3/partition-table.bin` | `0x8000` | Partition table |
+| `binaries-esp32s3/apc_usb_mqtt_bridge.bin` | `0x10000` | Main firmware app |
+
+Manual local use:
+
+```bash
+cd /home/dev/projects/esp32-apc-ups-mqtt
+python3 -m http.server 8000
+# Open http://localhost:8000/docs/ in Chrome/Edge on a machine with Web Serial access.
+```
+
+GitHub Pages deployment is handled by `.github/workflows/deploy-flasher.yml`. In GitHub, set Pages source to **GitHub Actions**.
 
 ## Upstream README
 

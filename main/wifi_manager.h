@@ -1,0 +1,13 @@
+#ifndef WIFI_MANAGER_H
+#define WIFI_MANAGER_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "esp_err.h"
+
+esp_err_t wifi_init_sta(const char *ssid, const char *password);
+esp_err_t wifi_start_provisioning_ap(const char *ssid_prefix, const char *password);
+esp_err_t wifi_wait_connected(uint32_t timeout_ms);
+bool wifi_is_connected(void);
+
+#endif // WIFI_MANAGER_H

@@ -1,0 +1,27 @@
+menu "APC UPS Configuration"
+
+    config PROVISIONING_AP_PREFIX
+        string "Provisioning AP SSID prefix"
+        default "APC-UPS-Setup"
+        help
+            The device appends the last 3 MAC bytes to this prefix when
+            starting the first-boot provisioning access point.
+
+    config PROVISIONING_AP_PASSWORD
+        string "Provisioning AP password"
+        default "configureme"
+        help
+            Temporary provisioning access point password. Must be empty for
+            an open AP or at least 8 characters for WPA2-PSK.
+
+    config UPS_POLL_INTERVAL_MS
+        int "UPS Poll Interval (ms)"
+        range 1000 60000
+        default 5000
+
+    config MQTT_PUBLISH_INTERVAL_MS
+        int "MQTT Publish Interval (ms)"
+        range 5000 300000
+        default 60000
+
+endmenu

@@ -23,6 +23,46 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
 
 No site Wi-Fi or MQTT credentials are stored in source, `sdkconfig.defaults`, or firmware defaults.
 
+
+## Immediate power-event MQTT messages
+
+The device keeps the full voltage/load/battery telemetry publish interval at the configured general status cadence, default `60` seconds. Power-state changes do not wait for that interval.
+
+When the UPS status changes, firmware immediately publishes a compact snapshot plus an event JSON message:
+
+| Event | Trigger |
+|-------|---------|
+| `power_lost` | Line power changes from online to on-battery/discharging |
+| `power_restored` | UPS returns from on-battery/discharging to online |
+| `low_battery` | UPS low-battery flag asserts |
+| `low_battery_cleared` | UPS low-battery flag clears |
+
+Immediate snapshot topics reuse the Home Assistant state topics for `status`, `input_voltage`, `load_percent`, `battery_charge`, `battery_runtime`, and `power_failure` when available.
+
+Dedicated event topic:
+
+```text
+apc_ups/<device_id>/events/power
+```
+
+Example event payload:
+
+```json
+{
+  "event": "power_lost",
+  "device_id": "apc_ups_aabbccddeeff",
+  "uptime_ms": 123456,
+  "status": "On Battery",
+  "online": false,
+  "discharging": true,
+  "low_battery": false,
+  "input_voltage": 0.00,
+  "battery_charge": 98.00,
+  "battery_runtime_seconds": 2400,
+  "load_percent": 23.00
+}
+```
+
 ## Browser web flasher
 
 This repo includes a Dexter-lab themed browser flasher under `docs/`, adapted from the CYM-NM28C5 web flasher pattern. It is intended for GitHub Pages and desktop Chrome/Edge with Web Serial enabled.

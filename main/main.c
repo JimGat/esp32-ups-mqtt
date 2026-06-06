@@ -17,9 +17,49 @@
 #include "apc_hid_parser.h"
 #include "usb_host_manager.h"
 #include "http_server.h"
+#include "power_event.h"
 
 static const char *TAG = "main";
 static app_config_t app_config;
+
+
+static void publish_immediate_power_snapshot(const ups_metrics_t *metrics)
+{
+    mqtt_publish_string("status", metrics->status_string);
+    mqtt_publish_metric("input_voltage", metrics->input_voltage, "V");
+    mqtt_publish_metric("load_percent", metrics->load_percent, "%");
+    mqtt_publish_metric("battery_charge", metrics->battery_charge, "%");
+    mqtt_publish_metric("battery_runtime", metrics->battery_runtime, "s");
+    if (strlen(metrics->power_failure_status) > 0) {
+        mqtt_publish_string("power_failure", metrics->power_failure_status);
+    }
+}
+
+static void power_event_task(void *arg)
+{
+    (void)arg;
+    power_event_state_t event_state;
+    power_event_state_init(&event_state);
+
+    ESP_LOGI(TAG, "⚡ Power event task started");
+
+    while (1) {
+        if (mqtt_is_connected()) {
+            const ups_metrics_t *metrics = apc_hid_get_metrics();
+            power_event_type_t event = power_event_classify(&event_state, metrics);
+
+            if (event != POWER_EVENT_NONE) {
+                const char *event_name = power_event_name(event);
+                ESP_LOGW(TAG, "⚡ UPS power event detected: %s", event_name);
+
+                publish_immediate_power_snapshot(metrics);
+                mqtt_publish_power_event(event_name, metrics, esp_log_timestamp());
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
 
 // Task to publish UPS metrics periodically
 static void mqtt_publish_task(void *arg)
@@ -261,7 +301,7 @@ static void simulate_ups_data_task(void *arg)
 
 // Build timestamp - updated on every compile
 #define BUILD_TIMESTAMP __DATE__ " " __TIME__
-#define FIRMWARE_VERSION "1.12.0-jimgat.1"
+#define FIRMWARE_VERSION "1.12.1-jimgat.2"
 
 void app_main(void)
 {
@@ -354,6 +394,7 @@ void app_main(void)
     ESP_LOGI(TAG, "DEBUG: USB setup complete, creating MQTT publish task");
     // Create MQTT publish task
     xTaskCreate(mqtt_publish_task, "mqtt_publish", 4096, NULL, 4, NULL);
+    xTaskCreate(power_event_task, "power_event", 4096, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "=== ✅ APC USB-MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

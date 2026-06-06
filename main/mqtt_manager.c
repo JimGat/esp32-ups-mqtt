@@ -37,7 +37,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     (void)handler_args;
     (void)base;
     
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+    (void)event_data;
     
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
@@ -180,6 +180,57 @@ esp_err_t mqtt_publish_discovery(const char *sensor_name, const char *friendly_n
     ESP_LOGI(TAG, "Published discovery for %s", sensor_name);
     return ESP_OK;
 }
+
+esp_err_t mqtt_publish_power_event(const char *event_name, const ups_metrics_t *metrics, uint32_t event_uptime_ms)
+{
+    if (!mqtt_connected || mqtt_client == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (event_name == NULL || metrics == NULL || !metrics->valid) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char topic[128];
+    char payload[512];
+
+    snprintf(topic, sizeof(topic), "apc_ups/%s/events/power", device_id);
+    snprintf(payload, sizeof(payload),
+             "{"
+             "\"event\":\"%s\","
+             "\"device_id\":\"%s\","
+             "\"uptime_ms\":%lu,"
+             "\"status\":\"%s\","
+             "\"online\":%s,"
+             "\"discharging\":%s,"
+             "\"low_battery\":%s,"
+             "\"input_voltage\":%.2f,"
+             "\"battery_charge\":%.2f,"
+             "\"battery_runtime_seconds\":%.0f,"
+             "\"load_percent\":%.2f"
+             "}",
+             event_name,
+             device_id,
+             (unsigned long)event_uptime_ms,
+             metrics->status_string,
+             metrics->status.online ? "true" : "false",
+             metrics->status.discharging ? "true" : "false",
+             metrics->status.low_battery ? "true" : "false",
+             metrics->input_voltage,
+             metrics->battery_charge,
+             metrics->battery_runtime,
+             metrics->load_percent);
+
+    int msg_id = esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 1, 0);
+
+    if (msg_id < 0) {
+        ESP_LOGE(TAG, "Failed to publish power event to %s", topic);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGW(TAG, "Published power event %s to %s", event_name, topic);
+    return ESP_OK;
+}
+
 
 bool mqtt_is_connected(void)
 {

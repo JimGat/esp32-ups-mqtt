@@ -89,7 +89,7 @@ GitHub Pages deployment is handled by `.github/workflows/deploy-flasher.yml`. In
 
 # hms-esp-apc
 
-<!-- Support link intentionally disabled until JimGat Lab support page is ready. -->
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://buymeacoffee.com/wjvasxixlg)
 
 ESP32-S3 USB Host to MQTT bridge for APC UPS with Home Assistant auto-discovery.
 
@@ -353,7 +353,7 @@ Contributions are welcome! Please open an issue or pull request.
 
 If this project is useful to you, consider buying me a coffee!
 
-<!-- Support link intentionally disabled until JimGat Lab support page is ready. -->
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://buymeacoffee.com/wjvasxixlg)
 
 ## License
 

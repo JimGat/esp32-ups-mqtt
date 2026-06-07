@@ -2,7 +2,7 @@
 
 A JimGat Lab ESP32-S3 APC UPS sentinel: USB-HID UPS telemetry in, MQTT power intelligence out.
 
-This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc), with attribution preserved but without carrying upstream local configuration history into this repo.
+This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc) by Albin Amat, with attribution preserved but without carrying upstream local configuration history into this repo.
 
 ## JimGat fork changes
 

@@ -89,7 +89,7 @@ GitHub Pages deployment is handled by `.github/workflows/deploy-flasher.yml`. In
 
 # hms-esp-apc
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
+<!-- Support link intentionally disabled until JimGat Lab support page is ready. -->
 
 ESP32-S3 USB Host to MQTT bridge for APC UPS with Home Assistant auto-discovery.
 
@@ -123,6 +123,91 @@ Connect the APC UPS USB port to the ESP32-S3 USB OTG pins:
 | GND (black) | GND |
 
 > **Note**: Most ESP32-S3 dev boards expose the USB OTG pins on a dedicated connector. If your board uses the USB OTG port for programming (USB-CDC), you may need a USB hub or OTG adapter.
+
+
+### Seeed Studio XIAO ESP32-S3 USB host wiring kit
+
+The Seeed Studio XIAO ESP32-S3 is a suitable target for this firmware because its USB-C connector is wired to the ESP32-S3 native USB-OTG peripheral. Use the XIAO USB-C port for UPS data/host mode; do **not** connect the UPS USB data wires to arbitrary XIAO GPIO header pins.
+
+For a compact XIAO install, the preferred cabling pattern is a USB-C OTG adapter with a power-injection/charging port. Power the XIAO from a charger plugged into a battery-backed UPS outlet, while the UPS USB cable connects to the adapter's USB-A data port.
+
+| Ordered item | Amazon link | Role in the build |
+|--------------|-------------|-------------------|
+| Antrader 1-foot Mini USB 2.0 A-male to Mini-B cables, pack of 6 | https://a.co/d/0dLqaXXz | Short data cable from APC UPS USB Mini-B management port to the OTG adapter USB-A port. If a UPS has a full-size USB-B port instead of Mini-B, use the matching USB-A to USB-B cable instead. |
+| 20W USB-C wall chargers, 4-pack | https://a.co/d/02OFik4w | Dedicated 5V power source for each XIAO bridge. Plug into a battery-backed UPS outlet so the bridge remains alive during line-power loss. |
+| 6-inch USB-C to USB-C cables, 4-pack | https://a.co/d/0bIzk3fL | Short power lead from the USB-C charger to the OTG adapter charging/power-injection port. |
+| AreMe 2-in-1 USB-C to USB 3.2 OTG adapter with 100W charging port | https://a.co/d/0dhfkRnu | Lets the XIAO use its USB-C port as the USB host connection to the UPS while also receiving external USB-C power. |
+
+Recommended physical wiring:
+
+```text
+UPS battery-backed AC outlet
+        │
+        ▼
+20W USB-C wall charger
+        │
+        ▼
+6-inch USB-C cable
+        │
+        ▼
+OTG adapter charging / power-injection port
+        │
+        ▼
+XIAO ESP32-S3 USB-C port  ── USB host/data ── OTG adapter USB-A port
+                                                 │
+                                                 ▼
+                                      USB-A to Mini-B cable
+                                                 │
+                                                 ▼
+                                      APC UPS USB management port
+```
+
+Electrical notes:
+
+- USB host data uses ESP32-S3 native USB `GPIO19` (`D-`) and `GPIO20` (`D+`), which are already routed to the XIAO USB-C connector.
+- The XIAO edge-header pins `D0`-`D10` are general GPIO/ADC/SPI/I2C/UART pins, not alternate USB host data pins.
+- Avoid powering the XIAO from the UPS USB management port alone; the bridge should have a stable 5V source that remains powered on battery.
+- If powering through the XIAO `5V` pin instead of USB-C, follow Seeed's guidance and use diode isolation to avoid backfeeding USB power rails.
+- Keep any hand-wired USB `D+`/`D-` runs short and paired; prefer the USB-C/OTG adapter path for the first prototype.
+
+First validation target in the serial log:
+
+```text
+APC UPS found! VID:PID = 051D:0002
+```
+
+or:
+
+```text
+APC UPS found! VID:PID = 051D:0003
+```
+
+### XIAO ESP32-S3 TTL serial debug wiring
+
+![Seeed Studio XIAO ESP32-S3 front pinout showing D6/GPIO43 TX, D7/GPIO44 RX, 5V, GND, and 3V3 pins](docs/images/xiao-esp32s3-pinout.jpg)
+
+When the XIAO USB-C port is being used as the USB host connection to the UPS, use the exposed UART pins for serial monitoring instead of relying on USB-CDC through the same USB-C connector.
+
+The firmware logs through ESP-IDF `ESP_LOG*()` calls, and this project defaults the ESP-IDF console to UART0 at `115200` baud.
+
+| XIAO ESP32-S3 pin | ESP32-S3 GPIO | UART signal | TTL adapter connection |
+|-------------------|---------------|-------------|------------------------|
+| `D6` | `GPIO43` | UART0 TX | Adapter RX |
+| `D7` | `GPIO44` | UART0 RX | Adapter TX, optional unless sending input |
+| `GND` | Ground | Ground reference | Adapter GND |
+
+Serial settings:
+
+```text
+115200 baud, 8 data bits, no parity, 1 stop bit
+```
+
+Important notes:
+
+- Use a **3.3V TTL** serial adapter, not RS-232 levels.
+- Do not connect the adapter's 5V output to the XIAO when the XIAO is already powered through the USB-C OTG/power adapter.
+- For receive-only logging, `D6`/`GPIO43` TX to adapter RX plus common ground is enough.
+- Connect adapter TX to `D7`/`GPIO44` RX only if interactive console input is needed.
 
 ## Prerequisites
 
@@ -268,7 +353,7 @@ Contributions are welcome! Please open an issue or pull request.
 
 If this project is useful to you, consider buying me a coffee!
 
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/aamat09)
+<!-- Support link intentionally disabled until JimGat Lab support page is ready. -->
 
 ## License
 

@@ -65,6 +65,10 @@ Example event payload:
 
 ## Browser web flasher
 
+> **Flash from your browser:** [Open the JimGat Lab APC UPS Web Flasher](https://jimgat.github.io/esp32-apc-ups-mqtt/)
+>
+> Use desktop Chrome or Edge with Web Serial enabled.
+
 This repo includes a Dexter-lab themed browser flasher under `docs/`, adapted from the CYM-NM28C5 web flasher pattern. It is intended for GitHub Pages and desktop Chrome/Edge with Web Serial enabled.
 
 Flash package layout:

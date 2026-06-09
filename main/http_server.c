@@ -276,6 +276,7 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
 {
     httpd_resp_sendstr_chunk(req,
         "<!DOCTYPE html><html><head>"
+        "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>");
     if (auto_refresh) {
         httpd_resp_sendstr_chunk(req, "<meta http-equiv='refresh' content='5'>");
@@ -294,7 +295,7 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
 
 static esp_err_t root_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     char buf[512];
 
     if (!check_basic_auth(req)) return ESP_OK;
@@ -367,7 +368,7 @@ static esp_err_t root_handler(httpd_req_t *req)
 
 static esp_err_t status_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     char buf[512];
 
     if (!check_basic_auth(req)) return ESP_OK;
@@ -531,9 +532,10 @@ static esp_err_t save_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Config saved to NVS, rebooting...");
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr_chunk(req,
         "<!DOCTYPE html><html><head>"
+        "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<style>");
     httpd_resp_sendstr_chunk(req, PAGE_STYLE);

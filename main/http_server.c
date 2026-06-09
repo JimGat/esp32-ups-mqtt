@@ -263,6 +263,8 @@ static const char *PAGE_STYLE =
         "overflow-x:auto;font-size:12px;max-height:500px;overflow-y:auto;line-height:1.4}"
     "a{color:#4db8ff;text-decoration:none}a:hover{text-decoration:underline}"
     ".nav{text-align:center;margin:10px 0}"
+    ".version-line{text-align:center;margin:-4px 0 12px;color:#a0a0c0;font-size:14px}"
+    ".version-line strong{color:#4db8ff}"
     ".online{color:#4caf50}.offline{color:#f44336}";
 
 static const char *PAGE_NAV =
@@ -284,7 +286,9 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
     httpd_resp_sendstr_chunk(req, PAGE_STYLE);
     httpd_resp_sendstr_chunk(req, "</style></head><body><h1>");
     httpd_resp_sendstr_chunk(req, title);
-    httpd_resp_sendstr_chunk(req, "</h1>");
+    httpd_resp_sendstr_chunk(req, "</h1><div class=version-line>Firmware <strong>");
+    httpd_resp_sendstr_chunk(req, FW_VERSION);
+    httpd_resp_sendstr_chunk(req, "</strong> &middot; <a href=/version>Version JSON</a></div>");
     httpd_resp_sendstr_chunk(req, PAGE_NAV);
 }
 

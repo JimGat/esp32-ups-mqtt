@@ -18,7 +18,7 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
 2. On first boot, connect to the Wi-Fi AP named `ESP32-UPS-Setup-XXXXXX`.
 3. Use provisioning AP password `configureme` unless changed in `idf.py menuconfig`.
 4. Open `http://192.168.4.1/`.
-5. Log in to the web interface with username `admin` and the current web password, then enter Wi-Fi SSID/password, MQTT broker URL, optional MQTT username/password, optional device label, optional new web password, and publish interval.
+5. Log in to the web interface with username `admin` and the current config AP/admin password, then enter Wi-Fi SSID/password, MQTT broker URL, optional MQTT username/password, optional device label, optional new config AP/admin password, and publish interval.
 6. Save. The device stores settings in NVS and reboots into station mode.
 
 No site Wi-Fi or MQTT credentials are stored in source, `sdkconfig.defaults`, or firmware defaults.
@@ -238,7 +238,7 @@ idf.py -p PORT monitor
 
 ## Configuration
 
-Wi-Fi, MQTT, device label, and web interface password settings are provisioned at runtime and stored in NVS, not hard-coded into source or sdkconfig.
+Wi-Fi, MQTT, device label, and config AP/admin password settings are provisioned at runtime and stored in NVS, not hard-coded into source or sdkconfig.
 
 On first boot, or when the configured Wi-Fi cannot be reached, the device starts a setup AP named `ESP32-UPS-Setup-XXXXXX`. Connect to it and browse to `http://192.168.4.1/` to save:
 
@@ -249,6 +249,8 @@ On first boot, or when the configured Wi-Fi cannot be reached, the device starts
 | MQTT Broker URL | NVS | MQTT broker address, e.g. `mqtt://192.168.1.100` |
 | MQTT Username | NVS | MQTT username, optional |
 | MQTT Password | NVS | MQTT password, optional |
+| Device Label | NVS | Friendly UPS label used for MQTT/Home Assistant identity and DHCP hostname |
+| Config AP/Admin Password | NVS | Password for the fallback setup AP and `admin` web login |
 | Publish Interval | NVS | How often to publish metrics to MQTT |
 
 Build-time menuconfig only controls non-site defaults:
@@ -256,7 +258,7 @@ Build-time menuconfig only controls non-site defaults:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Provisioning AP Prefix | `ESP32-UPS-Setup` | First-boot/fallback setup AP SSID prefix |
-| Provisioning AP Password | `configureme` | Temporary setup AP password and initial web interface password; change the web password from the config page after first login |
+| Provisioning AP Password | `configureme` | Initial config AP/admin password; change it from the config page after first login |
 | UPS Poll Interval | `5000` ms | How often to poll feature reports from the UPS |
 | MQTT Publish Interval | `60000` ms | Initial publish interval before provisioning overrides it |
 

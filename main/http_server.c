@@ -30,7 +30,7 @@ static vprintf_like_t    original_vprintf_fn = NULL;
 static app_config_t *current_config = NULL;
 
 #define WEB_AUTH_USER "admin"
-#define DEFAULT_WEB_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
+#define DEFAULT_PROVISIONING_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
 #define PAGE_TITLE "UPS MQTT Bridge"
 #define STATUS_TITLE "UPS MQTT Status"
 
@@ -107,7 +107,8 @@ esp_err_t config_load(app_config_t *config)
 {
     memset(config, 0, sizeof(*config));
     config->publish_interval_ms = CONFIG_MQTT_PUBLISH_INTERVAL_MS;
-    strlcpy(config->web_pass, DEFAULT_WEB_PASSWORD, sizeof(config->web_pass));
+    strlcpy(config->provisioning_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->provisioning_pass));
+    strlcpy(config->web_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->web_pass));
 
     nvs_handle_t nvs;
     if (nvs_open("config", NVS_READONLY, &nvs) == ESP_OK) {
@@ -117,12 +118,17 @@ esp_err_t config_load(app_config_t *config)
         len = sizeof(config->mqtt_url);   nvs_get_str(nvs, "mqtt_url",  config->mqtt_url,  &len);
         len = sizeof(config->mqtt_user);  nvs_get_str(nvs, "mqtt_user", config->mqtt_user, &len);
         len = sizeof(config->mqtt_pass);  nvs_get_str(nvs, "mqtt_pass", config->mqtt_pass, &len);
+        len = sizeof(config->provisioning_pass); nvs_get_str(nvs, "prov_pass", config->provisioning_pass, &len);
         len = sizeof(config->web_pass);   nvs_get_str(nvs, "web_pass",  config->web_pass,  &len);
         len = sizeof(config->device_label); nvs_get_str(nvs, "device_label", config->device_label, &len);
         nvs_get_u32(nvs, "pub_interval", &config->publish_interval_ms);
         nvs_close(nvs);
+        if (config->provisioning_pass[0] == '\0') {
+            const char *fallback_pass = config->web_pass[0] ? config->web_pass : DEFAULT_PROVISIONING_PASSWORD;
+            strlcpy(config->provisioning_pass, fallback_pass, sizeof(config->provisioning_pass));
+        }
         if (config->web_pass[0] == '\0') {
-            strlcpy(config->web_pass, DEFAULT_WEB_PASSWORD, sizeof(config->web_pass));
+            strlcpy(config->web_pass, config->provisioning_pass, sizeof(config->web_pass));
         }
         ESP_LOGI(TAG, "Config loaded from NVS");
     } else {
@@ -150,6 +156,7 @@ static esp_err_t config_save(const app_config_t *config)
     nvs_set_str(nvs, "mqtt_url",  config->mqtt_url);
     nvs_set_str(nvs, "mqtt_user", config->mqtt_user);
     nvs_set_str(nvs, "mqtt_pass", config->mqtt_pass);
+    nvs_set_str(nvs, "prov_pass", config->provisioning_pass);
     nvs_set_str(nvs, "web_pass",  config->web_pass);
     nvs_set_str(nvs, "device_label", config->device_label);
     nvs_set_u32(nvs, "pub_interval", config->publish_interval_ms);
@@ -205,7 +212,7 @@ static bool check_basic_auth(httpd_req_t *req)
     }
     decoded[decoded_len] = '\0';
 
-    const char *password = current_config->web_pass[0] ? current_config->web_pass : DEFAULT_WEB_PASSWORD;
+    const char *password = current_config->web_pass[0] ? current_config->web_pass : current_config->provisioning_pass;
     char expected[96];
     snprintf(expected, sizeof(expected), "%s:%s", WEB_AUTH_USER, password);
 
@@ -319,9 +326,9 @@ static esp_err_t root_handler(httpd_req_t *req)
 
     /* Web Interface */
     httpd_resp_sendstr_chunk(req,
-        "<div class='card'><h2>Web Interface</h2>"
-        "<p>Username is <strong>admin</strong>. Leave blank to keep the current web password.</p>"
-        "<label>New Web Password</label><input name='web_pass' type='password' placeholder='Leave blank to keep current password'>"
+        "<div class='card'><h2>Config AP / Admin Access</h2>"
+        "<p>Username is <strong>admin</strong>. This password also protects the fallback setup AP. Leave blank to keep the current password.</p>"
+        "<label>New Config AP/Admin Password</label><input name='admin_pass' type='password' placeholder='Leave blank to keep current password'>"
         "</div>");
 
     /* Device Label */
@@ -478,11 +485,13 @@ static esp_err_t save_handler(httpd_req_t *req)
         strlcpy(new_config.mqtt_user, val, sizeof(new_config.mqtt_user));
     if (get_form_value(body, "mqtt_pass", val, sizeof(val)))
         strlcpy(new_config.mqtt_pass, val, sizeof(new_config.mqtt_pass));
-    if (get_form_value(body, "web_pass", val, sizeof(val)) && val[0] != '\0') {
+    if ((get_form_value(body, "admin_pass", val, sizeof(val)) ||
+         get_form_value(body, "web_pass", val, sizeof(val))) && val[0] != '\0') {
         if (strlen(val) < 8 || strlen(val) >= sizeof(new_config.web_pass)) {
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Web password must be 8-63 characters");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Config AP/admin password must be 8-63 characters");
             return ESP_FAIL;
         }
+        strlcpy(new_config.provisioning_pass, val, sizeof(new_config.provisioning_pass));
         strlcpy(new_config.web_pass, val, sizeof(new_config.web_pass));
     }
     if (get_form_value(body, "device_label", val, sizeof(val)))

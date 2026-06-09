@@ -306,7 +306,7 @@ static void simulate_ups_data_task(void *arg)
 void app_main(void)
 {
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
-    ESP_LOGI(TAG, "🚀 APC USB-MQTT Bridge Starting");
+    ESP_LOGI(TAG, "🚀 UPS MQTT Bridge Starting");
     ESP_LOGI(TAG, "   Version: %s", FIRMWARE_VERSION);
     ESP_LOGI(TAG, "   Build: %s", BUILD_TIMESTAMP);
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
@@ -340,7 +340,7 @@ void app_main(void)
     if (!config_is_complete(&app_config)) {
         ESP_LOGW(TAG, "⚙️ Device is not provisioned. Starting WiFi setup access point.");
         ESP_ERROR_CHECK(wifi_start_provisioning_ap(CONFIG_PROVISIONING_AP_PREFIX,
-                                                   CONFIG_PROVISIONING_AP_PASSWORD));
+                                                   app_config.provisioning_pass));
         ESP_LOGI(TAG, "🌐 Starting provisioning web server...");
         ESP_ERROR_CHECK(http_server_start(&app_config));
         ESP_LOGW(TAG, "Connect to the setup AP and open http://192.168.4.1/ to save WiFi and MQTT settings.");
@@ -358,7 +358,7 @@ void app_main(void)
     if (wifi_wait_connected(30000) != ESP_OK) {
         ESP_LOGE(TAG, "❌ Failed to connect to configured WiFi. Starting provisioning access point.");
         ESP_ERROR_CHECK(wifi_start_provisioning_ap(CONFIG_PROVISIONING_AP_PREFIX,
-                                                   CONFIG_PROVISIONING_AP_PASSWORD));
+                                                   app_config.provisioning_pass));
         ESP_LOGI(TAG, "🌐 Starting provisioning web server...");
         ESP_ERROR_CHECK(http_server_start(&app_config));
         ESP_LOGW(TAG, "Connect to the setup AP and open http://192.168.4.1/ to update WiFi/MQTT settings.");
@@ -396,7 +396,7 @@ void app_main(void)
     xTaskCreate(mqtt_publish_task, "mqtt_publish", 4096, NULL, 4, NULL);
     xTaskCreate(power_event_task, "power_event", 4096, NULL, 5, NULL);
 
-    ESP_LOGI(TAG, "=== ✅ APC USB-MQTT Bridge Running ===");
+    ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
     ESP_LOGI(TAG, "MQTT Broker: %s", app_config.mqtt_url);
     ESP_LOGI(TAG, "🌐 Web UI: http://<device-ip>/  Status: http://<device-ip>/status");

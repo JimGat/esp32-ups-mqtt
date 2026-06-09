@@ -11,6 +11,7 @@ typedef struct {
     char mqtt_url[128];
     char mqtt_user[64];
     char mqtt_pass[64];
+    char provisioning_pass[64];
     char web_pass[64];
     uint32_t publish_interval_ms;
     char device_label[64];

@@ -10,18 +10,57 @@ static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_connected = false;
 
 // Device ID based on MAC address (e.g., "apc_ups_d0cf132fdfdc")
-static char device_id[32] = {0};
-static char mqtt_base_topic[64] = {0};
+static char device_id[64] = {0};
+static char mqtt_base_topic[96] = {0};
 static uint8_t device_mac[6] = {0};
 
-// Generate unique device ID from MAC address
-static void generate_device_id(void)
+static void sanitize_label(const char *input, char *output, size_t output_size)
+{
+    if (output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (input == NULL || input[0] == '\0') {
+        return;
+    }
+
+    size_t out_idx = 0;
+    bool last_was_sep = false;
+    for (size_t i = 0; input[i] != '\0' && out_idx < output_size - 1; i++) {
+        char c = input[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            output[out_idx++] = c;
+            last_was_sep = false;
+        } else if ((c == ' ' || c == '-' || c == '_') && out_idx > 0 && !last_was_sep) {
+            output[out_idx++] = '-';
+            last_was_sep = true;
+        }
+    }
+    if (out_idx > 0 && output[out_idx - 1] == '-') {
+        out_idx--;
+    }
+    output[out_idx] = '\0';
+}
+
+// Generate unique device ID from MAC address or use provided label
+static void generate_device_id(const char *label)
 {
     esp_efuse_mac_get_default(device_mac);
 
-    snprintf(device_id, sizeof(device_id), "apc_ups_%02x%02x%02x%02x%02x%02x",
-             device_mac[0], device_mac[1], device_mac[2],
-             device_mac[3], device_mac[4], device_mac[5]);
+    char sanitized[48];
+    sanitize_label(label, sanitized, sizeof(sanitized));
+
+    // Use provided label if it has topic-safe characters, otherwise use MAC-based ID.
+    if (sanitized[0] != '\0') {
+        snprintf(device_id, sizeof(device_id), "%s", sanitized);
+    } else {
+        snprintf(device_id, sizeof(device_id), "apc_ups_%02x%02x%02x%02x%02x%02x",
+                 device_mac[0], device_mac[1], device_mac[2],
+                 device_mac[3], device_mac[4], device_mac[5]);
+    }
 
     snprintf(mqtt_base_topic, sizeof(mqtt_base_topic), "homeassistant/sensor/%s", device_id);
 
@@ -56,10 +95,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
-esp_err_t mqtt_init(const char *broker_url, const char *username, const char *password)
+esp_err_t mqtt_init(const char *broker_url, const char *username, const char *password, const char *device_label)
 {
-    // Generate unique device ID from MAC address
-    generate_device_id();
+    // Generate unique device ID from MAC address or use provided label
+    generate_device_id(device_label);
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = broker_url,
@@ -81,7 +120,7 @@ esp_err_t mqtt_init(const char *broker_url, const char *username, const char *pa
         return err;
     }
 
-    ESP_LOGI(TAG, "MQTT client started, broker: %s, user: %s", broker_url, username);
+    ESP_LOGI(TAG, "MQTT client started, broker: %s, user: %s, device_id: %s", broker_url, username, device_id);
     return ESP_OK;
 }
 

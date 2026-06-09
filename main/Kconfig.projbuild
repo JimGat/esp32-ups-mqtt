@@ -1,8 +1,8 @@
-menu "APC UPS Configuration"
+menu "ESP32 UPS MQTT Configuration"
 
     config PROVISIONING_AP_PREFIX
         string "Provisioning AP SSID prefix"
-        default "APC-UPS-Setup"
+        default "ESP32-UPS-Setup"
         help
             The device appends the last 3 MAC bytes to this prefix when
             starting the first-boot provisioning access point.

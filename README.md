@@ -1,4 +1,4 @@
-# esp32-apc-ups-mqtt
+# esp32-ups-mqtt
 
 A JimGat Lab ESP32-S3 APC UPS sentinel: USB-HID UPS telemetry in, MQTT power intelligence out.
 
@@ -15,7 +15,7 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
 ## First boot provisioning
 
 1. Flash the firmware.
-2. On first boot, connect to the Wi-Fi AP named `APC-UPS-Setup-XXXXXX`.
+2. On first boot, connect to the Wi-Fi AP named `ESP32-UPS-Setup-XXXXXX`.
 3. Use provisioning AP password `configureme` unless changed in `idf.py menuconfig`.
 4. Open `http://192.168.4.1/`.
 5. Enter Wi-Fi SSID/password, MQTT broker URL, optional MQTT username/password, and publish interval.
@@ -65,7 +65,7 @@ Example event payload:
 
 ## Browser web flasher
 
-> **Flash from your browser:** [Open the JimGat Lab APC UPS Web Flasher](https://jimgat.github.io/esp32-apc-ups-mqtt/)
+> **Flash from your browser:** [Open the JimGat Lab APC UPS Web Flasher](https://jimgat.github.io/esp32-ups-mqtt/)
 >
 > Use desktop Chrome or Edge with Web Serial enabled.
 
@@ -77,12 +77,12 @@ Flash package layout:
 |------|--------|---------|
 | `binaries-esp32s3/bootloader.bin` | `0x0` | ESP32-S3 bootloader |
 | `binaries-esp32s3/partition-table.bin` | `0x8000` | Partition table |
-| `binaries-esp32s3/apc_usb_mqtt_bridge.bin` | `0x10000` | Main firmware app |
+| `binaries-esp32s3/esp32_ups_mqtt_bridge.bin` | `0x10000` | Main firmware app |
 
 Manual local use:
 
 ```bash
-cd /home/dev/projects/esp32-apc-ups-mqtt
+cd /home/dev/projects/esp32-ups-mqtt
 python3 -m http.server 8000
 # Open http://localhost:8000/docs/ in Chrome/Edge on a machine with Web Serial access.
 ```
@@ -223,8 +223,8 @@ Important notes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/JimGat/esp32-apc-ups-mqtt.git
-cd esp32-apc-ups-mqtt
+git clone https://github.com/JimGat/esp32-ups-mqtt.git
+cd esp32-ups-mqtt
 
 # Build. Do not put site Wi-Fi/MQTT credentials in source or sdkconfig.
 idf.py build
@@ -240,7 +240,7 @@ idf.py -p PORT monitor
 
 Wi-Fi and MQTT settings are provisioned at runtime and stored in NVS, not hard-coded into source or sdkconfig.
 
-On first boot, or when the configured Wi-Fi cannot be reached, the device starts a setup AP named `APC-UPS-Setup-XXXXXX`. Connect to it and browse to `http://192.168.4.1/` to save:
+On first boot, or when the configured Wi-Fi cannot be reached, the device starts a setup AP named `ESP32-UPS-Setup-XXXXXX`. Connect to it and browse to `http://192.168.4.1/` to save:
 
 | Setting | Storage | Description |
 |---------|---------|-------------|
@@ -255,7 +255,7 @@ Build-time menuconfig only controls non-site defaults:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Provisioning AP Prefix | `APC-UPS-Setup` | First-boot/fallback setup AP SSID prefix |
+| Provisioning AP Prefix | `ESP32-UPS-Setup` | First-boot/fallback setup AP SSID prefix |
 | Provisioning AP Password | `configureme` | Temporary setup AP password; change for production images if desired |
 | UPS Poll Interval | `5000` ms | How often to poll feature reports from the UPS |
 | MQTT Publish Interval | `60000` ms | Initial publish interval before provisioning overrides it |

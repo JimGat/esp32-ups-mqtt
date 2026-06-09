@@ -352,7 +352,7 @@ void app_main(void)
 
     // Initialize WiFi
     ESP_LOGI(TAG, "📶 Initializing WiFi...");
-    ESP_ERROR_CHECK(wifi_init_sta(app_config.wifi_ssid, app_config.wifi_pass));
+    ESP_ERROR_CHECK(wifi_init_sta(app_config.wifi_ssid, app_config.wifi_pass, app_config.device_label));
 
     // Wait for WiFi connection. If stored credentials fail, fall back to provisioning instead of reboot-looping.
     if (wifi_wait_connected(30000) != ESP_OK) {
@@ -374,7 +374,7 @@ void app_main(void)
 
     // Initialize MQTT
     ESP_LOGI(TAG, "📡 Initializing MQTT...");
-    ESP_ERROR_CHECK(mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass));
+    ESP_ERROR_CHECK(mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass, app_config.device_label));
     ESP_LOGI(TAG, "DEBUG: MQTT init complete");
 
     // Initialize USB Host

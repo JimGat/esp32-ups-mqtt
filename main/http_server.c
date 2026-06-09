@@ -109,6 +109,7 @@ esp_err_t config_load(app_config_t *config)
         len = sizeof(config->mqtt_url);   nvs_get_str(nvs, "mqtt_url",  config->mqtt_url,  &len);
         len = sizeof(config->mqtt_user);  nvs_get_str(nvs, "mqtt_user", config->mqtt_user, &len);
         len = sizeof(config->mqtt_pass);  nvs_get_str(nvs, "mqtt_pass", config->mqtt_pass, &len);
+        len = sizeof(config->device_label); nvs_get_str(nvs, "device_label", config->device_label, &len);
         nvs_get_u32(nvs, "pub_interval", &config->publish_interval_ms);
         nvs_close(nvs);
         ESP_LOGI(TAG, "Config loaded from NVS");
@@ -137,6 +138,7 @@ static esp_err_t config_save(const app_config_t *config)
     nvs_set_str(nvs, "mqtt_url",  config->mqtt_url);
     nvs_set_str(nvs, "mqtt_user", config->mqtt_user);
     nvs_set_str(nvs, "mqtt_pass", config->mqtt_pass);
+    nvs_set_str(nvs, "device_label", config->device_label);
     nvs_set_u32(nvs, "pub_interval", config->publish_interval_ms);
 
     err = nvs_commit(nvs);
@@ -240,6 +242,16 @@ static esp_err_t root_handler(httpd_req_t *req)
         current_config->mqtt_pass);
     httpd_resp_sendstr_chunk(req, buf);
     httpd_resp_sendstr_chunk(req, "</div>");
+
+    /* Device Label */
+    char label_esc[128];
+    html_escape(label_esc, current_config->device_label, sizeof(label_esc));
+    snprintf(buf, sizeof(buf),
+        "<div class='card'><h2>Device Identification</h2>"
+        "<label>Device Label (e.g., 'UPS Server Room')</label><input name='device_label' value='%s'>"
+        "</div>",
+        label_esc);
+    httpd_resp_sendstr_chunk(req, buf);
 
     /* Interval */
     snprintf(buf, sizeof(buf),
@@ -381,6 +393,8 @@ static esp_err_t save_handler(httpd_req_t *req)
         strlcpy(new_config.mqtt_user, val, sizeof(new_config.mqtt_user));
     if (get_form_value(body, "mqtt_pass", val, sizeof(val)))
         strlcpy(new_config.mqtt_pass, val, sizeof(new_config.mqtt_pass));
+    if (get_form_value(body, "device_label", val, sizeof(val)))
+        strlcpy(new_config.device_label, val, sizeof(new_config.device_label));
     if (get_form_value(body, "interval", val, sizeof(val))) {
         int secs = atoi(val);
         if (secs >= 5 && secs <= 300)

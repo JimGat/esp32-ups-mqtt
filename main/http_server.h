@@ -12,6 +12,7 @@ typedef struct {
     char mqtt_user[64];
     char mqtt_pass[64];
     uint32_t publish_interval_ms;
+    char device_label[64];
 } app_config_t;
 
 esp_err_t config_load(app_config_t *config);

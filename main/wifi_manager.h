@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-esp_err_t wifi_init_sta(const char *ssid, const char *password);
+esp_err_t wifi_init_sta(const char *ssid, const char *password, const char *device_label);
 esp_err_t wifi_start_provisioning_ap(const char *ssid_prefix, const char *password);
 esp_err_t wifi_wait_connected(uint32_t timeout_ms);
 bool wifi_is_connected(void);

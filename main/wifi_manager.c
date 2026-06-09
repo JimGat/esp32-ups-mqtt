@@ -21,6 +21,37 @@ static bool s_wifi_initialized = false;
 static char stored_ssid[64] = {0};
 static esp_netif_t *s_ap_netif = NULL;
 
+static void sanitize_label_for_hostname(const char *input, char *output, size_t output_size)
+{
+    if (output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (input == NULL || input[0] == '\0') {
+        return;
+    }
+
+    size_t out_idx = 0;
+    bool last_was_sep = false;
+    for (size_t i = 0; input[i] != '\0' && out_idx < output_size - 1; i++) {
+        char c = input[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            output[out_idx++] = c;
+            last_was_sep = false;
+        } else if ((c == ' ' || c == '-') && out_idx > 0 && !last_was_sep) {
+            output[out_idx++] = '-';
+            last_was_sep = true;
+        }
+    }
+    if (out_idx > 0 && output[out_idx - 1] == '-') {
+        out_idx--;
+    }
+    output[out_idx] = '\0';
+}
+
 static void event_handler(void* arg, esp_event_base_t event_base,
                          int32_t event_id, void* event_data)
 {
@@ -81,7 +112,7 @@ static esp_err_t wifi_common_init(void)
     return ESP_OK;
 }
 
-esp_err_t wifi_init_sta(const char *ssid, const char *password)
+esp_err_t wifi_init_sta(const char *ssid, const char *password, const char *device_label)
 {
     if (ssid == NULL || ssid[0] == '\0') {
         ESP_LOGE(TAG, "Cannot start station mode without an SSID");
@@ -91,6 +122,23 @@ esp_err_t wifi_init_sta(const char *ssid, const char *password)
     ESP_ERROR_CHECK(wifi_common_init());
     strlcpy(stored_ssid, ssid, sizeof(stored_ssid));
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+
+    // Set hostname based on device_label if provided, otherwise use MAC-based hostname
+    esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta_netif != NULL) {
+        char hostname[64];
+        char sanitized_label[48];
+        sanitize_label_for_hostname(device_label, sanitized_label, sizeof(sanitized_label));
+        if (sanitized_label[0] != '\0') {
+            snprintf(hostname, sizeof(hostname), "esp32-ups-%s", sanitized_label);
+        } else {
+            uint8_t mac[6];
+            esp_efuse_mac_get_default(mac);
+            snprintf(hostname, sizeof(hostname), "esp32-ups-mqtt-%02x%02x%02x", mac[3], mac[4], mac[5]);
+        }
+        esp_netif_set_hostname(sta_netif, hostname);
+        ESP_LOGI(TAG, "Hostname set to: %s", hostname);
+    }
 
     wifi_config_t wifi_config = {
         .sta = {
@@ -119,7 +167,7 @@ esp_err_t wifi_start_provisioning_ap(const char *ssid_prefix, const char *passwo
     esp_efuse_mac_get_default(mac);
 
     char ap_ssid[33];
-    const char *prefix = (ssid_prefix && ssid_prefix[0]) ? ssid_prefix : "APC-UPS-Setup";
+    const char *prefix = (ssid_prefix && ssid_prefix[0]) ? ssid_prefix : "ESP32-UPS-Setup";
     snprintf(ap_ssid, sizeof(ap_ssid), "%s-%02X%02X%02X", prefix, mac[3], mac[4], mac[5]);
 
     wifi_config_t ap_config = {0};

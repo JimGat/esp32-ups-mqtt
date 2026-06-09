@@ -1,5 +1,5 @@
 {
-  "name": "APC UPS Sentinel \u2014 ESP32-S3",
+  "name": "UPS MQTT Bridge \u2014 ESP32-S3",
   "version": "v0.1.1",
   "build": "instant-power-events",
   "chipFamily": "ESP32-S3",

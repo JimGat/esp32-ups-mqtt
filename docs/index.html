@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>APC UPS Sentinel Web Flasher</title>
-    <meta name="description" content="Browser flasher and serial monitor for JimGat APC UPS Sentinel firmware on ESP32-S3.">
+    <title>UPS MQTT Bridge Web Flasher</title>
+    <meta name="description" content="Browser flasher and serial monitor for JimGat UPS MQTT Bridge firmware on ESP32-S3.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -21,8 +21,8 @@
     <div class="container">
       <header>
         <div class="logo-wrap"><img class="logo-img" src="dexter_logo.png" alt="Dexter laboratory badge"></div>
-        <div class="eyebrow">JimGat Lab &nbsp;·&nbsp; APC UPS Sentinel &nbsp;·&nbsp; ESP32-S3</div>
-        <p>Web Serial flasher and serial monitor for the ESP32-S3 APC USB-HID to MQTT bridge. Flash the sentinel, then join its setup AP to provision Wi-Fi and MQTT into NVS — no credentials in source, no sketchy hard-coded lab secrets.</p>
+        <div class="eyebrow">JimGat Lab &nbsp;·&nbsp; UPS MQTT Bridge &nbsp;·&nbsp; ESP32-S3</div>
+        <p>Web Serial flasher and serial monitor for the ESP32-S3 APC USB-HID to MQTT bridge. Flash the bridge, then join its setup AP to provision Wi-Fi and MQTT into NVS — no credentials in source, no sketchy hard-coded lab secrets.</p>
         <div class="hero-meta">
           <span class="pill"><strong>Chip</strong> ESP32-S3</span>
           <span class="pill"><strong>USB</strong> APC HID</span>
@@ -42,7 +42,7 @@
           <div class="card"><h2>Serial monitor</h2><p>Read boot logs and provisioning hints directly from the browser.</p><div class="controls" style="margin-top:12px;"><div class="actions"><button id="monitorBtn" class="ghost">Monitor</button><select id="monitorBaudSelect"><option value="115200">115200 baud</option><option value="460800">460800 baud</option><option value="921600">921600 baud</option></select><button id="clearMonitorBtn" class="ghost">Clear</button></div><div class="status-line"><span id="monitorStatusText">Monitor disconnected.</span></div><div class="log" id="monitorLog"></div><div class="actions"><input id="monitorInput" class="text-input" type="text" placeholder="Type text to send over UART"><button id="monitorSendBtn" class="ghost" disabled>Send</button></div></div></div>
         </div>
         <div class="stack">
-          <div class="card"><h2>After flashing</h2><p id="releaseInfo">Loading manifest.</p><ul class="steps"><li><strong>Boot:</strong> press RESET after flashing if the board does not auto-reboot.</li><li><strong>Provision:</strong> join Wi-Fi AP <code>ESP32-UPS-Setup-XXXXXX</code>, password <code>configureme</code>, then open <code>http://192.168.4.1/</code>.</li><li><strong>Configure:</strong> save Wi-Fi SSID/password, MQTT broker URL, optional MQTT user/password, and publish interval. Settings are stored in NVS.</li><li><strong>Connect UPS:</strong> use ESP32-S3 USB OTG D-/D+ to the APC UPS USB port. Target APC VID <code>051D</code>, Smart-UPS PID <code>0003</code>.</li><li><strong>Power path:</strong> keep Wi-Fi, MQTT broker, router, and JARVIS on UPS-backed power if you want outage alerts during outages.</li></ul></div>
+          <div class="card"><h2>After flashing</h2><p id="releaseInfo">Loading manifest.</p><ul class="steps"><li><strong>Boot:</strong> press RESET after flashing if the board does not auto-reboot.</li><li><strong>Provision:</strong> join Wi-Fi AP <code>ESP32-UPS-Setup-XXXXXX</code>, password <code>configureme</code>, then open <code>http://192.168.4.1/</code>.</li><li><strong>Configure:</strong> log in as admin, then save Wi-Fi SSID/password, MQTT broker URL, optional MQTT user/password, optional device label, optional new web password, and publish interval. Settings are stored in NVS.</li><li><strong>Connect UPS:</strong> use ESP32-S3 USB OTG D-/D+ to the APC UPS USB port. Target APC VID <code>051D</code>, Smart-UPS PID <code>0003</code>.</li><li><strong>Power path:</strong> keep Wi-Fi, MQTT broker, router, and JARVIS on UPS-backed power if you want outage alerts during outages.</li></ul></div>
           <div class="card"><h2>Direct downloads</h2><p>Same binaries used by this flasher.</p><div class="link-grid"><a href="../binaries-esp32s3/esp32_ups_mqtt_bridge.bin"><code>esp32_ups_mqtt_bridge.bin</code><span>Main app (0x10000)</span></a><a href="../binaries-esp32s3/bootloader.bin"><code>bootloader.bin</code><span>Bootloader (0x0)</span></a><a href="../binaries-esp32s3/partition-table.bin"><code>partition-table.bin</code><span>Partition table (0x8000)</span></a><a href="manifest.json"><code>manifest.json</code><span>Web flasher manifest</span></a></div></div>
           <div class="card"><h2>Browser support</h2><p>Chrome or Edge on desktop over HTTPS. Web Serial is required for both flashing and monitor mode. Firefox and Safari are not supported.</p></div>
         </div>

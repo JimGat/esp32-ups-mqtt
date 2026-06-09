@@ -5,10 +5,12 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "sdkconfig.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "mbedtls/base64.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +28,11 @@ static SemaphoreHandle_t log_mutex = NULL;
 static vprintf_like_t    original_vprintf_fn = NULL;
 
 static app_config_t *current_config = NULL;
+
+#define WEB_AUTH_USER "admin"
+#define DEFAULT_WEB_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
+#define PAGE_TITLE "UPS MQTT Bridge"
+#define STATUS_TITLE "UPS MQTT Status"
 
 static int capture_vprintf(const char *fmt, va_list args)
 {
@@ -100,6 +107,7 @@ esp_err_t config_load(app_config_t *config)
 {
     memset(config, 0, sizeof(*config));
     config->publish_interval_ms = CONFIG_MQTT_PUBLISH_INTERVAL_MS;
+    strlcpy(config->web_pass, DEFAULT_WEB_PASSWORD, sizeof(config->web_pass));
 
     nvs_handle_t nvs;
     if (nvs_open("config", NVS_READONLY, &nvs) == ESP_OK) {
@@ -109,9 +117,13 @@ esp_err_t config_load(app_config_t *config)
         len = sizeof(config->mqtt_url);   nvs_get_str(nvs, "mqtt_url",  config->mqtt_url,  &len);
         len = sizeof(config->mqtt_user);  nvs_get_str(nvs, "mqtt_user", config->mqtt_user, &len);
         len = sizeof(config->mqtt_pass);  nvs_get_str(nvs, "mqtt_pass", config->mqtt_pass, &len);
+        len = sizeof(config->web_pass);   nvs_get_str(nvs, "web_pass",  config->web_pass,  &len);
         len = sizeof(config->device_label); nvs_get_str(nvs, "device_label", config->device_label, &len);
         nvs_get_u32(nvs, "pub_interval", &config->publish_interval_ms);
         nvs_close(nvs);
+        if (config->web_pass[0] == '\0') {
+            strlcpy(config->web_pass, DEFAULT_WEB_PASSWORD, sizeof(config->web_pass));
+        }
         ESP_LOGI(TAG, "Config loaded from NVS");
     } else {
         ESP_LOGW(TAG, "No saved NVS config found; provisioning is required");
@@ -138,12 +150,72 @@ static esp_err_t config_save(const app_config_t *config)
     nvs_set_str(nvs, "mqtt_url",  config->mqtt_url);
     nvs_set_str(nvs, "mqtt_user", config->mqtt_user);
     nvs_set_str(nvs, "mqtt_pass", config->mqtt_pass);
+    nvs_set_str(nvs, "web_pass",  config->web_pass);
     nvs_set_str(nvs, "device_label", config->device_label);
     nvs_set_u32(nvs, "pub_interval", config->publish_interval_ms);
 
     err = nvs_commit(nvs);
     nvs_close(nvs);
     return err;
+}
+
+/* ═══════════════ Basic Auth Helpers ═══════════════ */
+
+static void send_auth_challenge(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"UPS MQTT Bridge\"");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Authentication required. Username: admin");
+}
+
+static bool check_basic_auth(httpd_req_t *req)
+{
+    if (current_config == NULL) {
+        send_auth_challenge(req);
+        return false;
+    }
+
+    size_t hdr_len = httpd_req_get_hdr_value_len(req, "Authorization");
+    if (hdr_len == 0 || hdr_len >= 192) {
+        send_auth_challenge(req);
+        return false;
+    }
+
+    char auth_header[192];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_header, sizeof(auth_header)) != ESP_OK) {
+        send_auth_challenge(req);
+        return false;
+    }
+
+    const char prefix[] = "Basic ";
+    if (strncmp(auth_header, prefix, strlen(prefix)) != 0) {
+        send_auth_challenge(req);
+        return false;
+    }
+
+    unsigned char decoded[128];
+    size_t decoded_len = 0;
+    int rc = mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
+                                   (const unsigned char *)(auth_header + strlen(prefix)),
+                                   strlen(auth_header + strlen(prefix)));
+    if (rc != 0 || decoded_len >= sizeof(decoded)) {
+        send_auth_challenge(req);
+        return false;
+    }
+    decoded[decoded_len] = '\0';
+
+    const char *password = current_config->web_pass[0] ? current_config->web_pass : DEFAULT_WEB_PASSWORD;
+    char expected[96];
+    snprintf(expected, sizeof(expected), "%s:%s", WEB_AUTH_USER, password);
+
+    if (strcmp((const char *)decoded, expected) != 0) {
+        ESP_LOGW(TAG, "HTTP auth failed");
+        send_auth_challenge(req);
+        return false;
+    }
+
+    return true;
 }
 
 /* ═══════════════ HTML Helpers ═══════════════ */
@@ -211,7 +283,9 @@ static esp_err_t root_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     char buf[512];
 
-    send_page_header(req, "APC UPS Bridge", false);
+    if (!check_basic_auth(req)) return ESP_OK;
+
+    send_page_header(req, PAGE_TITLE, false);
 
     char ssid_esc[128], url_esc[256], user_esc[128];
     html_escape(ssid_esc, current_config->wifi_ssid, sizeof(ssid_esc));
@@ -242,6 +316,13 @@ static esp_err_t root_handler(httpd_req_t *req)
         current_config->mqtt_pass);
     httpd_resp_sendstr_chunk(req, buf);
     httpd_resp_sendstr_chunk(req, "</div>");
+
+    /* Web Interface */
+    httpd_resp_sendstr_chunk(req,
+        "<div class='card'><h2>Web Interface</h2>"
+        "<p>Username is <strong>admin</strong>. Leave blank to keep the current web password.</p>"
+        "<label>New Web Password</label><input name='web_pass' type='password' placeholder='Leave blank to keep current password'>"
+        "</div>");
 
     /* Device Label */
     char label_esc[128];
@@ -275,7 +356,9 @@ static esp_err_t status_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     char buf[512];
 
-    send_page_header(req, "APC UPS Status", true);
+    if (!check_basic_auth(req)) return ESP_OK;
+
+    send_page_header(req, STATUS_TITLE, true);
 
     /* UPS Metrics */
     const ups_metrics_t *m = apc_hid_get_metrics();
@@ -372,7 +455,9 @@ static esp_err_t status_handler(httpd_req_t *req)
 
 static esp_err_t save_handler(httpd_req_t *req)
 {
-    char body[512];
+    if (!check_basic_auth(req)) return ESP_OK;
+
+    char body[1024];
     int recv_len = httpd_req_recv(req, body, sizeof(body) - 1);
     if (recv_len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No data received");
@@ -393,6 +478,13 @@ static esp_err_t save_handler(httpd_req_t *req)
         strlcpy(new_config.mqtt_user, val, sizeof(new_config.mqtt_user));
     if (get_form_value(body, "mqtt_pass", val, sizeof(val)))
         strlcpy(new_config.mqtt_pass, val, sizeof(new_config.mqtt_pass));
+    if (get_form_value(body, "web_pass", val, sizeof(val)) && val[0] != '\0') {
+        if (strlen(val) < 8 || strlen(val) >= sizeof(new_config.web_pass)) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Web password must be 8-63 characters");
+            return ESP_FAIL;
+        }
+        strlcpy(new_config.web_pass, val, sizeof(new_config.web_pass));
+    }
     if (get_form_value(body, "device_label", val, sizeof(val)))
         strlcpy(new_config.device_label, val, sizeof(new_config.device_label));
     if (get_form_value(body, "interval", val, sizeof(val))) {

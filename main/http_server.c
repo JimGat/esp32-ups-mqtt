@@ -32,7 +32,7 @@ static app_config_t *current_config = NULL;
 #define WEB_AUTH_USER "admin"
 #define DEFAULT_PROVISIONING_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
 #define PAGE_TITLE "UPS MQTT Bridge"
-#define STATUS_TITLE "UPS MQTT Status"
+#define STATUS_TITLE "UPS MQTT Bridge Status"
 #ifndef FW_VERSION
 #define FW_VERSION "v0.0.0-unknown"
 #endif

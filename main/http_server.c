@@ -33,6 +33,9 @@ static app_config_t *current_config = NULL;
 #define DEFAULT_PROVISIONING_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
 #define PAGE_TITLE "UPS MQTT Bridge"
 #define STATUS_TITLE "UPS MQTT Status"
+#ifndef FW_VERSION
+#define FW_VERSION "v0.0.0-unknown"
+#endif
 
 static int capture_vprintf(const char *fmt, va_list args)
 {
@@ -458,6 +461,20 @@ static esp_err_t status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* ═══════════════ GET /version — Public Firmware Version ═══════════════ */
+
+static esp_err_t version_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    char buf[192];
+    snprintf(buf, sizeof(buf),
+             "{\"name\":\"UPS MQTT Bridge\",\"version\":\"%s\",\"chipFamily\":\"ESP32-S3\"}\n",
+             FW_VERSION);
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
 /* ═══════════════ POST /save — Save Config & Reboot ═══════════════ */
 
 static esp_err_t save_handler(httpd_req_t *req)
@@ -547,7 +564,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 4;
+    httpd_config.max_uri_handlers = 5;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -555,12 +572,14 @@ esp_err_t http_server_start(app_config_t *config)
         return err;
     }
 
-    const httpd_uri_t root_uri   = { .uri = "/",       .method = HTTP_GET,  .handler = root_handler   };
-    const httpd_uri_t status_uri = { .uri = "/status",  .method = HTTP_GET,  .handler = status_handler };
-    const httpd_uri_t save_uri   = { .uri = "/save",    .method = HTTP_POST, .handler = save_handler   };
+    const httpd_uri_t root_uri    = { .uri = "/",        .method = HTTP_GET,  .handler = root_handler    };
+    const httpd_uri_t status_uri  = { .uri = "/status",   .method = HTTP_GET,  .handler = status_handler  };
+    const httpd_uri_t version_uri = { .uri = "/version",  .method = HTTP_GET,  .handler = version_handler };
+    const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
 
     httpd_register_uri_handler(server, &root_uri);
     httpd_register_uri_handler(server, &status_uri);
+    httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", httpd_config.server_port);

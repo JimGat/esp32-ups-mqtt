@@ -112,14 +112,18 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x09:  // Battery voltage (UPS.PowerSummary.Voltage) - Feature Report
-            ESP_LOGI(TAG, "   Type: Battery Voltage");
-            if (length >= 3) {
-                // From NUT: 16-bit value, Exponent = -2, so divide by 100
+        case 0x09:  // Battery voltage (UPS.PowerSummary.Voltage) - UNRELIABLE on APC 051D:0003
+            // Report 0x09 returns garbage (191.12V) on APC Back-UPS XS 1000M.
+            // Report 0x0D is the authoritative battery voltage source.
+            // Only use 0x09 as a fallback if 0x0D hasn't provided a value yet.
+            ESP_LOGI(TAG, "   Type: Battery Voltage (Report 0x09 - unreliable)");
+            if (length >= 3 && target->battery_voltage < 1.0f) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
                 target->battery_voltage = (float)voltage_raw / 100.0f;
-                ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.2fV", voltage_raw, target->battery_voltage);
+                ESP_LOGI(TAG, "   └─ Fallback voltage: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
                 updated = true;
+            } else {
+                ESP_LOGI(TAG, "   └─ Skipped (0x0D already provided %.2fV)", target->battery_voltage);
             }
             break;
 

@@ -612,42 +612,27 @@ void usb_host_task(void *arg)
     const int64_t POLL_INTERVAL_MS = 10000;  // Poll feature reports every 10 seconds
     bool initial_poll_done = false;
 
-    // Report IDs to actively poll (verified from NUT explore output)
-    // These are Feature Reports that MUST be polled, NOT sent via interrupt
-    // Organized by category for clarity
+    // Report IDs to actively poll via GET_REPORT (feature reports)
+    // Only include reports that actually respond on APC Back-UPS XS 1000M (051D:0003)
+    // Reports that STALL on this UPS: 0x09, 0x15, 0x16, 0x17, 0x18, 0x20, 0x24,
+    //   0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x50, 0x52
+    // Note: 0x31 (input voltage) and 0x50 (load %) are NOT available as feature
+    // reports on this UPS -- they may arrive as interrupt IN reports only.
+    // Note: 0x09 returns garbage (191.12V), 0x0D is authoritative for voltage.
     const uint8_t poll_reports[] = {
-        // === CRITICAL REAL-TIME METRICS (poll every cycle) ===
-        0x16,  // Present Status Bits (online/discharging/charging/low battery) - 8-bit
-        0x09,  // Battery voltage (UPS.PowerSummary.Voltage) - 16-bit, /100 for V
-        0x31,  // Input voltage (UPS.Input.Voltage) - 16-bit, /100 for V
-        0x50,  // Load percentage (UPS.PowerConverter.PercentLoad) - 8-bit or 16-bit
-        0x0A,  // Battery runtime (UPS.PowerSummary.RunTimeToEmpty) - 16-bit, seconds
-        0x06,  // Present status (interrupt variant, also poll as backup)
+        // === CRITICAL METRICS ===
+        0x0A,  // Battery runtime (seconds, 16-bit LE) - WORKS
+        0x06,  // Status flags (ACPresent, Charging, etc.) - WORKS
+        0x0D,  // Battery voltage (16-bit LE / 100) - WORKS, authoritative
 
-        // === BATTERY INFORMATION ===
-        0x08,  // Battery nominal voltage (UPS.PowerSummary.ConfigVoltage) - 16-bit (12V)
-        0x0E,  // Full charge capacity (100% - not used, just logged)
+        // === BATTERY INFO ===
+        0x08,  // Battery nominal voltage (per-cell, 0x78 = 1.2V PbAc)
+        0x0E,  // Full charge capacity
         0x0F,  // Battery charge warning threshold (50%)
-        0x11,  // Battery charge low threshold (UPS.PowerSummary.RemainingCapacityLimit = 10%)
-        0x24,  // Battery runtime low threshold (UPS.Battery.RemainingTimeLimit = 120s)
-        0x17,  // Reboot timer (120s)
-        0x03,  // Battery chemistry type (reports code 4 = NiMH)
-        0x07,  // UPS manufacture date (days since reference = 21690)
-        0x20,  // Battery manufacture date (days since reference = 21690)
-
-        // === INPUT POWER CONFIGURATION ===
-        0x30,  // Input nominal voltage (UPS.Input.ConfigVoltage) - 8-bit (120V)
-        0x32,  // Low voltage transfer point (88V)
-        0x33,  // High voltage transfer point (139V)
-        0x34,  // Input sensitivity adjustment
-        0x35,  // Input sensitivity (low/medium/high)
-        0x36,  // Input frequency (50/60Hz)
-
-        // === UPS CONFIGURATION ===
-        0x52,  // Real power nominal (600W)
-        0x15,  // Shutdown timer (-1 = not active)
+        0x11,  // Battery charge low threshold (10%)
+        0x03,  // Battery chemistry type (1 = PbAc)
+        0x07,  // UPS manufacture date
         0x10,  // Beeper status (enabled/disabled/muted)
-        0x18,  // Self-test result
     };
     const int num_poll_reports = sizeof(poll_reports) / sizeof(poll_reports[0]);
 

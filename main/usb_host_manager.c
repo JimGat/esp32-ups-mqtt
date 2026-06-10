@@ -300,7 +300,7 @@ static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffe
     transfer->callback = transfer_callback;
     transfer->context = NULL;
     transfer->num_bytes = buffer_size + 8;
-    transfer->timeout_ms = 1000;
+    transfer->timeout_ms = 3000;
 
     // Fill setup packet
     usb_setup_packet_t *setup = (usb_setup_packet_t *)transfer->data_buffer;
@@ -368,16 +368,16 @@ static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffe
             *actual_length = transfer->actual_num_bytes - 8;
             if (*actual_length > 0 && *actual_length <= buffer_size) {
                 memcpy(buffer, transfer->data_buffer + 8, *actual_length);
-                ESP_LOGD(TAG, "✅ GET_REPORT 0x%02X: %d bytes", report_id, *actual_length);
+                ESP_LOGI(TAG, "✅ GET_REPORT 0x%02X: %d bytes", report_id, *actual_length);
                 err = ESP_OK;
             } else {
                 err = ESP_ERR_INVALID_SIZE;
             }
         } else if (transfer->status == USB_TRANSFER_STATUS_STALL) {
-            ESP_LOGD(TAG, "⚠️  Report 0x%02X not available (STALL)", report_id);
+            ESP_LOGI(TAG, "⚠️  Report 0x%02X not available (STALL)", report_id);
             err = ESP_ERR_NOT_SUPPORTED;
         } else {
-            ESP_LOGD(TAG, "⚠️  GET_REPORT 0x%02X failed, status=%d", report_id, transfer->status);
+            ESP_LOGI(TAG, "⚠️  GET_REPORT 0x%02X failed, status=%d", report_id, transfer->status);
             err = ESP_FAIL;
         }
         usb_host_transfer_free(transfer);

@@ -156,7 +156,8 @@ esp_err_t update_post_handler(httpd_req_t *req)
 
         if (ret <= 0) {
             if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-                /* Retry on timeout */
+                /* Retry on timeout - yield to avoid tight CPU spin loop */
+                vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
             ESP_LOGE(TAG, "Connection closed, received %d of %d", received, req->content_len);

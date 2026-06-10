@@ -62,15 +62,73 @@
 
 #include "usb_host_manager.h"
 #include "apc_hid_parser.h"
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "usb/usb_host.h"
+#include "esp_log.h"
 #include "esp_timer.h"
+#include "usb/usb_host.h"
 #include <string.h>
 
 static const char *TAG = "usb_host";
+
+/* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
+static void hid_report_desc_cb(usb_transfer_t *transfer) {
+    if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
+        ESP_LOGI(TAG, "=== HID REPORT DESCRIPTOR (%d bytes) ===", transfer->actual_num_bytes);
+        for (int i = 0; i < transfer->actual_num_bytes; i += 16) {
+            char line[80];
+            int offset = 0;
+            for (int j = 0; j < 16; j++) {
+                if (i + j < transfer->actual_num_bytes) {
+                    offset += sprintf(&line[offset], "%02x ", transfer->data_buffer[i + j]);
+                } else {
+                    offset += sprintf(&line[offset], "   ");
+                }
+            }
+            ESP_LOGI(TAG, "%04x: %s", i, line);
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to get HID Report Descriptor: %d", transfer->status);
+    }
+    usb_host_transfer_free(transfer);
+}
+
+static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
+    usb_transfer_t *ctrl_xfer = NULL;
+    esp_err_t err = usb_host_transfer_alloc(520, 0, &ctrl_xfer); // 512 data + 8 setup
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to alloc ctrl xfer: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ctrl_xfer->device_handle = dev_hdl;
+    ctrl_xfer->bEndpointAddress = 0;
+    ctrl_xfer->callback = hid_report_desc_cb;
+    ctrl_xfer->context = NULL;
+    ctrl_xfer->timeout_ms = 1000;
+
+    // Setup packet is prepended to data_buffer in ESP-IDF
+    ctrl_xfer->data_buffer[0] = 0x81;       // bmRequestType: IN, Standard, Interface
+    ctrl_xfer->data_buffer[1] = 0x06;       // bRequest: GET_DESCRIPTOR
+    ctrl_xfer->data_buffer[2] = 0x22;       // wValue: HID Report Descriptor (0x22)
+    ctrl_xfer->data_buffer[3] = 0x00;       // wValue: Index 0
+    ctrl_xfer->data_buffer[4] = intf_num;   // wIndex: Interface number
+    ctrl_xfer->data_buffer[5] = 0x00;       
+    ctrl_xfer->data_buffer[6] = 0x00;       // wLength: 512 bytes (LSB)
+    ctrl_xfer->data_buffer[7] = 0x02;       // wLength: 512 bytes (MSB)
+    
+    ctrl_xfer->num_bytes = 520; // 8 bytes setup + 512 bytes data
+
+    err = usb_host_transfer_submit(ctrl_xfer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to submit ctrl xfer: %s", esp_err_to_name(err));
+        usb_host_transfer_free(ctrl_xfer);
+    } else {
+        ESP_LOGI(TAG, "🔍 Requesting HID Report Descriptor from UPS...");
+    }
+}
+/* ----------------------------------------------------------------------- */
 
 //══════════════════════════════════════════════════════════════════════════════
 // USB DEVICE IDENTIFICATION
@@ -145,6 +203,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                     ESP_LOGE(TAG, "Failed to claim interface: %s", esp_err_to_name(err));
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
+                    // 🔍 Evil Hardware Hacker: Dump the HID Report Descriptor to find exact Report IDs
+                    request_hid_report_descriptor(ups_device, HID_INTERFACE);
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)

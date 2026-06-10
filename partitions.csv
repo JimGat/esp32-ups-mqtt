@@ -1,0 +1,9 @@
+# Name,     Type, SubType, Offset,   Size,     Flags
+# Note: Two-OTA layout for 4MB flash. No factory partition.
+# First flash via USB writes bootloader + partition table + OTA slot 0.
+# All subsequent updates go via web OTA to the inactive slot.
+nvs,        data, nvs,     0x9000,   0x4000
+otadata,    data, ota,     0xD000,   0x2000
+phy_init,   data, phy,     0xF000,   0x1000
+ota_0,      app,  ota_0,   0x20000,  0x1C0000
+ota_1,      app,  ota_1,   0x1E0000, 0x1C0000

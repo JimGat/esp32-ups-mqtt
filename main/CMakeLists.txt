@@ -7,6 +7,7 @@ idf_component_register(
         "apc_hid_parser.c"
         "usb_host_manager.c"
         "http_server.c"
+        "ota_update.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -19,5 +20,6 @@ idf_component_register(
         esp_netif
         esp_event
         esp_http_server
+        app_update
         mbedtls
 )

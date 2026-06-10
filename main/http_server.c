@@ -2,6 +2,7 @@
 #include "apc_hid_parser.h"
 #include "usb_host_manager.h"
 #include "wifi_manager.h"
+#include "ota_update.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -450,6 +451,16 @@ static esp_err_t status_handler(httpd_req_t *req)
         "<button id='cls' onclick=\"document.getElementById('logs').textContent='';logIdx=0\" style='margin-left:4px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Clear</button>"
         "<pre id='logs' style='max-height:500px;overflow-y:auto;font-size:12px'></pre>"
         "</div>"
+        /* Device Management Card (HTML) */
+        "<div class='card'><h2>Device Management</h2>"
+        "<table id='systbl'><tr><th>Firmware</th><td>loading...</td></tr></table>"
+        "<hr style='border-color:#444'>"
+        "<button id='rbt' onclick='doReboot()' style='padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #855;background:#543;color:#fcc;margin:4px'>Reboot Device</button>"
+        "<hr style='border-color:#444'>"
+        "<h3 style='margin:4px 0'>Firmware Update (OTA)</h3>"
+        "<input type='file' id='fwfile' accept='.bin' style='margin:4px 0'>"
+        "<button id='updbtn' onclick='doUpdate()' style='padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #585;background:#353;color:#cfc;margin:4px'>Upload Firmware</button>"
+        "</div>"
         "<script>"
         "var logIdx=0,MAX_DOM=2000;"
         "function copyLogs(){"
@@ -513,6 +524,39 @@ static esp_err_t status_handler(httpd_req_t *req)
         "  x.send();"
         "}"
         "setInterval(refreshMetrics,10000);"
+        /* Device Management Card */
+        "function doReboot(){"
+        "  if(!confirm('Reboot the device?'))return;"
+        "  document.getElementById('rbt').textContent='Rebooting...';"
+        "  var x=new XMLHttpRequest();"
+        "  x.open('POST','/reboot',true);"
+        "  x.onload=function(){setTimeout(function(){location.reload()},5000)};"
+        "  x.onerror=function(){setTimeout(function(){location.reload()},5000)};"
+        "  x.send();"
+        "}"
+        "function doUpdate(){"
+        "  var f=document.getElementById('fwfile').files[0];"
+        "  if(!f){alert('Select a firmware .bin file first');return;}"
+        "  if(!confirm('Flash firmware: '+f.name+' ('+Math.round(f.size/1024)+'KB)?\\nDevice will reboot after upload.'))return;"
+        "  document.getElementById('updbtn').textContent='Uploading...';document.getElementById('updbtn').disabled=true;"
+        "  var fd=new FormData();fd.append('file',f);"
+        "  var x=new XMLHttpRequest();"
+        "  x.open('POST','/update',true);"
+        "  x.onload=function(){"
+        "    if(x.status==200){document.getElementById('updbtn').textContent='Success! Rebooting...';setTimeout(function(){location.reload()},8000);}"
+        "    else{document.getElementById('updbtn').textContent='Upload Failed';setTimeout(function(){document.getElementById('updbtn').textContent='Upload Firmware';document.getElementById('updbtn').disabled=false},3000);}"
+        "  };"
+        "  x.onerror=function(){document.getElementById('updbtn').textContent='Upload Error';setTimeout(function(){document.getElementById('updbtn').textContent='Upload Firmware';document.getElementById('updbtn').disabled=false},3000);};"
+        "  x.upload.onprogress=function(e){if(e.lengthComputable){var pct=Math.round(e.loaded/e.total*100);document.getElementById('updbtn').textContent='Uploading '+pct+'%';}};"
+        "  x.send(fd);"
+        "}"
+        "function loadSystem(){"
+        "  var x=new XMLHttpRequest();"
+        "  x.open('GET','/system',true);"
+        "  x.onload=function(){if(x.status!=200)return;var s=JSON.parse(x.responseText);var t=document.getElementById('systbl');if(!t)return;t.innerHTML='<tr><th>Firmware</th><td>'+s.firmware+'</td></tr><tr><th>Partition</th><td>'+s.running_partition+'</td></tr><tr><th>OTA Slot</th><td>'+(s.ota_slot>=0?s.ota_slot:'factory')+'</td></tr><tr><th>Free Heap</th><td>'+(s.free_heap/1024).toFixed(0)+' KB</td></tr><tr><th>Uptime</th><td>'+Math.floor(s.uptime_s/3600)+'h '+Math.floor((s.uptime_s%3600)/60)+'m</td></tr>';};"
+        "  x.send();"
+        "}"
+        "loadSystem();"
         "</script>"
         "</body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
@@ -543,9 +587,6 @@ static esp_err_t logs_handler(httpd_req_t *req)
 
     /* Build JSON response with lines since from_idx */
     /* Track absolute position: log_write_idx is the next write slot */
-    int total = (log_count < LOG_RING_SIZE) ? log_count : LOG_RING_SIZE;
-    int oldest_abs = (log_count < LOG_RING_SIZE) ? 0 : log_write_idx;
-    int newest_abs = (oldest_abs + total - 1) % LOG_RING_SIZE;
     int global_next = (log_count < LOG_RING_SIZE) ? log_count : (log_count);
     /* global_next is the absolute index the NEXT write will get */
 
@@ -747,7 +788,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 7;
+    httpd_config.max_uri_handlers = 12;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -768,6 +809,9 @@ esp_err_t http_server_start(app_config_t *config)
     httpd_register_uri_handler(server, &metrics_uri);
     httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
+
+    /* OTA & system management endpoints */
+    register_ota_handlers(server);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", httpd_config.server_port);
     return ESP_OK;

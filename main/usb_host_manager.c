@@ -67,6 +67,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "usb/usb_host.h"
+#include "esp_timer.h"
 #include <string.h>
 
 static const char *TAG = "usb_host";

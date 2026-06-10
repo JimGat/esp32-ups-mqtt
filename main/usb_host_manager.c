@@ -598,6 +598,9 @@ void usb_host_task(void *arg)
     const int MAX_ERRORS = 10;
     int loop_count = 0;
     int poll_cycle = 0;
+    int64_t last_poll_time = 0;  // Time of last feature report poll cycle
+    const int64_t POLL_INTERVAL_MS = 40000;  // Poll feature reports every 40 seconds
+    bool initial_poll_done = false;
 
     // Report IDs to actively poll (verified from NUT explore output)
     // These are Feature Reports that MUST be polled, NOT sent via interrupt
@@ -697,10 +700,16 @@ void usb_host_task(void *arg)
                 apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
             }
 
-            // RE-ENABLED: Using correct Feature Report IDs from NUT exploration
-            // Poll on first loop and then every 20 loops (~40 seconds)
-            if (loop_count == 1 || loop_count % 20 == 0) {
-                ESP_LOGI(TAG, "🔄 Active polling cycle %d: Requesting %d reports...", poll_cycle++, num_poll_reports);
+            // Time-based feature report polling (loop_count is unreliable because
+            // read_hid_report blocks for seconds at a time)
+            int64_t now_ms = esp_timer_get_time() / 1000;
+            bool time_for_poll = !initial_poll_done || 
+                                 (now_ms - last_poll_time) >= POLL_INTERVAL_MS;
+            
+            if (time_for_poll) {
+                initial_poll_done = true;
+                last_poll_time = now_ms;
+                ESP_LOGI(TAG, "🔄 Active polling cycle %d: Requesting %d reports... (elapsed %lld ms since last poll)", poll_cycle++, num_poll_reports, initial_poll_done ? (now_ms - last_poll_time + POLL_INTERVAL_MS) : 0);
 
                 for (int i = 0; i < num_poll_reports; i++) {
                     uint8_t report_id = poll_reports[i];

@@ -70,6 +70,15 @@
 #include "usb/usb_host.h"
 #include <string.h>
 
+// Local definition of USB setup packet to avoid missing header issues
+typedef struct __attribute__((packed)) {
+    uint8_t bmRequestType;
+    uint8_t bRequest;
+    uint16_t wValue;
+    uint16_t wIndex;
+    uint16_t wLength;
+} usb_setup_packet_local_t;
+
 static const char *TAG = "usb_host";
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
@@ -108,17 +117,15 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
     ctrl_xfer->context = NULL;
     ctrl_xfer->timeout_ms = 1000;
 
-    // Setup packet is prepended to data_buffer in ESP-IDF
-    ctrl_xfer->data_buffer[0] = 0x81;       // bmRequestType: IN, Standard, Interface
-    ctrl_xfer->data_buffer[1] = 0x06;       // bRequest: GET_DESCRIPTOR
-    ctrl_xfer->data_buffer[2] = 0x22;       // wValue: HID Report Descriptor (0x22)
-    ctrl_xfer->data_buffer[3] = 0x00;       // wValue: Index 0
-    ctrl_xfer->data_buffer[4] = intf_num;   // wIndex: Interface number
-    ctrl_xfer->data_buffer[5] = 0x00;       
-    ctrl_xfer->data_buffer[6] = 0x00;       // wLength: 512 bytes (LSB)
-    ctrl_xfer->data_buffer[7] = 0x02;       // wLength: 512 bytes (MSB)
-    
-    ctrl_xfer->num_bytes = 520; // 8 bytes setup + 512 bytes data
+    // Setup packet is placed at the start of data_buffer for control transfers
+    usb_setup_packet_local_t *setup = (usb_setup_packet_local_t *)ctrl_xfer->data_buffer;
+    setup->bmRequestType = 0x81;       // IN, Standard, Interface
+    setup->bRequest = 0x06;            // GET_DESCRIPTOR
+    setup->wValue = 0x2200;            // Descriptor Type 0x22 (HID Report), Index 0 (Little Endian)
+    setup->wIndex = intf_num;          // Interface number
+    setup->wLength = 512;              // Max descriptor size to read (Little Endian)
+
+    ctrl_xfer->num_bytes = sizeof(usb_setup_packet_local_t) + 512;
 
     err = usb_host_transfer_submit(ctrl_xfer);
     if (err != ESP_OK) {

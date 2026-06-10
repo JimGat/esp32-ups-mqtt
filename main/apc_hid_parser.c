@@ -82,15 +82,20 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
 
         case 0x06:  // Status flags
             ESP_LOGI(TAG, "   Type: Status Flags");
-            if (length >= 4) {
-                uint8_t status_byte = data[3];
-                target->status.online = (status_byte & 0x08) != 0;
-                target->status.discharging = (status_byte & 0x01) != 0;
-                target->status.charging = (status_byte & 0x02) != 0;
-                target->status.low_battery = (status_byte & 0x04) != 0;
+            if (length >= 3) {
+                /* APC status flags layout (from NUT hid-ups.c):
+                   Byte 1: ACPresent(0x01), Charging(0x02), Discharging(0x04),
+                           LowBattery(0x08), ShutdownImminent(0x10)
+                   Byte 2: Overload(0x01), BatteryBad(0x02), ReplaceBattery(0x04) */
+                uint8_t status_byte = data[1];
+                target->status.online = (status_byte & 0x01) != 0;      // ACPresent
+                target->status.discharging = (status_byte & 0x04) != 0;  // Discharging
+                target->status.charging = (status_byte & 0x02) != 0;     // Charging
+                target->status.low_battery = (status_byte & 0x08) != 0;  // LowBattery
 
-                ESP_LOGI(TAG, "   └─ Status byte 0x%02X: %s", status_byte,
-                         target->status.online ? "ONLINE" : "ON_BATTERY");
+                ESP_LOGI(TAG, "   └─ Status byte 0x%02X: ACPresent=%d Charging=%d Discharging=%d LowBatt=%d",
+                         status_byte, target->status.online, target->status.charging,
+                         target->status.discharging, target->status.low_battery);
                 updated = true;
             }
             break;

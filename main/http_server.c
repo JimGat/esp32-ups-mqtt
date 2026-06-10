@@ -18,10 +18,11 @@
 static const char *TAG = "http_server";
 
 /* ═══════════════ Log Ring Buffer ═══════════════ */
-/* Small capture buffer -- just enough to hold lines between JS polls (2s).
-   The browser DOM is the real buffer. ESP32 only needs to bridge the gap. */
-#define LOG_RING_SIZE 40
-#define LOG_LINE_LEN  120
+/* Bridge buffer -- holds logs between JS polls (every 2s).
+   The browser DOM is the real long-term buffer (up to 2000 lines).
+   200 lines covers ~2 min of verbose logging, plenty for 2s polls. */
+#define LOG_RING_SIZE 200
+#define LOG_LINE_LEN  100
 
 static char log_ring[LOG_RING_SIZE][LOG_LINE_LEN];
 static int  log_write_idx = 0;
@@ -445,7 +446,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     /* Serial Logs (JS-powered: polls /logs endpoint, auto-scrolls, copy button) */
     httpd_resp_sendstr_chunk(req,
         "<div class='card'><h2>Serial Logs</h2>"
-        "<button id='cpb' onclick=\"navigator.clipboard.writeText(document.getElementById('logs').innerText).then(function(){var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)})\" style='margin-bottom:8px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Copy Logs</button>"
+        "<button id='cpb' onclick=\"var p=document.getElementById('logs');var t=p.innerText;if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(function(){var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)})}else{var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)}\" style='margin-bottom:8px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Copy Logs</button>"
         "<button id='cls' onclick=\"document.getElementById('logs').textContent='';logIdx=0\" style='margin-left:4px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Clear</button>"
         "<pre id='logs' style='max-height:500px;overflow-y:auto;font-size:12px'></pre>"
         "</div>"

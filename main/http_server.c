@@ -18,10 +18,12 @@
 static const char *TAG = "http_server";
 
 /* ═══════════════ Log Ring Buffer ═══════════════ */
-#define LOG_RING_SIZE 500
+/* Small capture buffer -- just enough to hold lines between JS polls (2s).
+   The browser DOM is the real buffer. ESP32 only needs to bridge the gap. */
+#define LOG_RING_SIZE 40
 #define LOG_LINE_LEN  120
 
-static char (*log_ring)[LOG_LINE_LEN] = NULL;  // Dynamically allocated
+static char log_ring[LOG_RING_SIZE][LOG_LINE_LEN];
 static int  log_write_idx = 0;
 static int  log_count     = 0;
 static SemaphoreHandle_t log_mutex = NULL;
@@ -42,7 +44,7 @@ static int capture_vprintf(const char *fmt, va_list args)
     va_list copy;
     va_copy(copy, args);
 
-    if (log_ring && log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    if (log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         vsnprintf(log_ring[log_write_idx], LOG_LINE_LEN, fmt, copy);
         int len = strlen(log_ring[log_write_idx]);
         if (len > 0 && log_ring[log_write_idx][len - 1] == '\n')
@@ -448,7 +450,8 @@ static esp_err_t status_handler(httpd_req_t *req)
         "<pre id='logs' style='max-height:500px;overflow-y:auto;font-size:12px'></pre>"
         "</div>"
         "<script>"
-        "var logIdx=0;"
+        "var logIdx=0,MAX_DOM=2000;"
+        "function trimLogs(){var p=document.getElementById('logs');while(p.childNodes.length>MAX_DOM*2)p.removeChild(p.firstChild);}"
         "function fetchLogs(){"
         "  var x=new XMLHttpRequest();"
         "  x.open('GET','/logs?from='+logIdx,true);"
@@ -459,6 +462,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         "    if(r.lines&&r.lines.length>0){"
         "      var p=document.getElementById('logs');"
         "      for(var i=0;i<r.lines.length;i++){p.appendChild(document.createTextNode(r.lines[i]));p.appendChild(document.createElement('br'));}"
+        "      trimLogs();"
         "      p.scrollTop=p.scrollHeight;"
         "    }"
         "    logIdx=r.next_idx;"
@@ -513,7 +517,7 @@ static esp_err_t logs_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
-    if (!log_ring || !log_mutex || !xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100))) {
+    if (!log_mutex || !xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100))) {
         httpd_resp_sendstr(req, "{\"lines\":[],\"next_idx\":0}");
         return ESP_OK;
     }
@@ -715,25 +719,11 @@ esp_err_t http_server_start(app_config_t *config)
 {
     current_config = config;
 
-    /* Start log capture */
-    ESP_LOGI(TAG, "Free heap before log buffer: %d bytes", (int)esp_get_free_heap_size());
+    /* Start log capture -- small bridge buffer, DOM is the real buffer */
     log_mutex = xSemaphoreCreateMutex();
     if (log_mutex) {
-        // Allocate log ring buffer from heap (60KB for 500 lines x 120 chars)
-        log_ring = malloc(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
-        if (log_ring) {
-            memset(log_ring, 0, sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
-            original_vprintf_fn = esp_log_set_vprintf(capture_vprintf);
-            ESP_LOGI(TAG, "Log capture enabled (%d lines, %dKB), free heap after: %d bytes",
-                     LOG_RING_SIZE,
-                     (int)(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]) / 1024),
-                     (int)esp_get_free_heap_size());
-        } else {
-            ESP_LOGE(TAG, "Failed to allocate log ring buffer (%d lines, %d bytes needed, %d bytes free)",
-                     LOG_RING_SIZE,
-                     (int)sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]),
-                     (int)esp_get_free_heap_size());
-        }
+        original_vprintf_fn = esp_log_set_vprintf(capture_vprintf);
+        ESP_LOGI(TAG, "Log capture enabled (%d line bridge buffer, DOM is real buffer)", LOG_RING_SIZE);
     }
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();

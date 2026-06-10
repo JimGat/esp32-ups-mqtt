@@ -436,7 +436,7 @@ static esp_err_t read_hid_report(uint8_t *buffer, size_t buffer_size, size_t *ac
     transfer->callback = transfer_callback;
     transfer->context = NULL;
     transfer->num_bytes = buffer_size;
-    transfer->timeout_ms = 1000;
+    transfer->timeout_ms = 300;  // Short timeout - UPS sends every ~8s
 
     // Submit transfer
     err = usb_host_transfer_submit(transfer);
@@ -452,8 +452,9 @@ static esp_err_t read_hid_report(uint8_t *buffer, size_t buffer_size, size_t *ac
     // So we must poll events while waiting, not just block on semaphore
     ESP_LOGD(TAG, "⏳ Waiting for transfer completion (endpoint 0x%02X)...", HID_INTERRUPT_IN_EP);
 
-    // Poll for up to 2000ms (transfer timeout is 1000ms + extra margin for slow callbacks)
-    const int max_wait_ms = 2000;
+    // Poll for up to 500ms (interrupt data comes every ~8s from UPS)
+    // Shorter timeout means we return to the main loop faster for poll cycles
+    const int max_wait_ms = 500;
     const int poll_interval_ms = 10;
     int waited_ms = 0;
     bool transfer_complete = false;
@@ -504,22 +505,30 @@ static esp_err_t read_hid_report(uint8_t *buffer, size_t buffer_size, size_t *ac
         // CRITICAL: Only free after callback has fired
         usb_host_transfer_free(transfer);
     } else {
-        // Timeout waiting for callback - this should be very rare
-        // Continue waiting until callback fires to avoid memory corruption
-        ESP_LOGW(TAG, "⚠️  App-level timeout (%dms), continuing to wait for USB callback...", max_wait_ms);
+        // Timeout waiting for callback - release mutex so other transfers can proceed,
+        // then keep processing events until callback fires to avoid memory corruption
+        ESP_LOGW(TAG, "⚠️  App-level timeout (%dms), releasing mutex and waiting for late callback...", max_wait_ms);
+        xSemaphoreGive(transfer_mutex);  // Release mutex BEFORE waiting
 
-        // Keep processing events until callback fires (with no time limit)
-        while (!transfer_complete) {
+        // Keep processing events until callback fires (with a hard limit)
+        int late_wait_ms = 0;
+        const int LATE_WAIT_MAX_MS = 5000;  // Give up after 5s more
+        while (!transfer_complete && late_wait_ms < LATE_WAIT_MAX_MS) {
             usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(poll_interval_ms));
             if (xSemaphoreTake(transfer_done, 0) == pdTRUE) {
                 transfer_complete = true;
-                ESP_LOGW(TAG, "✅ Late callback received, freeing transfer");
+                ESP_LOGW(TAG, "✅ Late callback received, freeing transfer (waited %dms more)", late_wait_ms);
                 usb_host_transfer_free(transfer);
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+            late_wait_ms += poll_interval_ms;
         }
-        err = ESP_ERR_TIMEOUT;
+        if (!transfer_complete) {
+            ESP_LOGE(TAG, "❌ Late callback never fired after %dms, leaking transfer", late_wait_ms);
+            // Can't free transfer without callback -- it's a small leak but prevents crash
+        }
+        return ESP_ERR_TIMEOUT;
     }
 
     // Release mutex
@@ -600,7 +609,7 @@ void usb_host_task(void *arg)
     int loop_count = 0;
     int poll_cycle = 0;
     int64_t last_poll_time = 0;  // Time of last feature report poll cycle
-    const int64_t POLL_INTERVAL_MS = 40000;  // Poll feature reports every 40 seconds
+    const int64_t POLL_INTERVAL_MS = 10000;  // Poll feature reports every 10 seconds
     bool initial_poll_done = false;
 
     // Report IDs to actively poll (verified from NUT explore output)

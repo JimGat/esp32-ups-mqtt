@@ -702,11 +702,23 @@ void usb_host_task(void *arg)
 
                 for (int i = 0; i < num_poll_reports; i++) {
                     uint8_t report_id = poll_reports[i];
+                    // CRITICAL: Clear buffer before GET_REPORT to prevent stale data
+                    memset(report_buffer, 0, sizeof(report_buffer));
                     err = get_hid_report(report_id, report_buffer, sizeof(report_buffer), &report_len);
 
                     if (err == ESP_OK && report_len > 0) {
+                        // Log raw hex of feature report response
+                        ESP_LOGI(TAG, "📥 GET_REPORT 0x%02X: %d bytes", report_id, report_len);
+                        char hex_buf[128] = {0};
+                        int pos = 0;
+                        for (int b = 0; b < report_len && b < 16; b++) {
+                            pos += snprintf(hex_buf + pos, sizeof(hex_buf) - pos, "%02X ", report_buffer[b]);
+                        }
+                        ESP_LOGI(TAG, "   Raw: %s", hex_buf);
                         // Parse the polled report
                         apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
+                    } else if (err != ESP_OK) {
+                        ESP_LOGW(TAG, "⚠️ GET_REPORT 0x%02X failed: %s", report_id, esp_err_to_name(err));
                     }
 
                     // Small delay between polls to avoid overwhelming UPS

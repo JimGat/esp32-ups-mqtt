@@ -379,7 +379,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     const ups_metrics_t *m = apc_hid_get_metrics();
 
     httpd_resp_sendstr_chunk(req,
-        "<div class='card'><h2>UPS Metrics</h2><table>");
+        "<div class='card'><h2>UPS Metrics</h2><table id='mtbl'>");
 
     if (m->valid) {
         snprintf(buf, sizeof(buf),
@@ -451,21 +451,45 @@ static esp_err_t status_handler(httpd_req_t *req)
         "var logIdx=0;"
         "function fetchLogs(){"
         "  var x=new XMLHttpRequest();"
+        "  x.open('GET','/logs?from='+logIdx,true);"
+        "  x.withCredentials=true;"
         "  x.onload=function(){"
-        "    if(x.status!=200)return;"
+        "    if(x.status!=200){console.log('logs err',x.status);return;}"
         "    var r=JSON.parse(x.responseText);"
         "    if(r.lines&&r.lines.length>0){"
         "      var p=document.getElementById('logs');"
-        "      r.lines.forEach(function(l){p.appendChild(document.createTextNode(l+'\\n'))});"
+        "      for(var i=0;i<r.lines.length;i++){p.appendChild(document.createTextNode(r.lines[i]));p.appendChild(document.createElement('br'));}"
         "      p.scrollTop=p.scrollHeight;"
         "    }"
         "    logIdx=r.next_idx;"
         "  };"
-        "  x.open('GET','/logs?from='+logIdx,true);"
+        "  x.onerror=function(){console.log('logs XHR error');};"
         "  x.send();"
         "}"
         "fetchLogs();"
         "setInterval(fetchLogs,2000);"
+        /* Metrics refresh every 10s */
+        "function refreshMetrics(){"
+        "  var x=new XMLHttpRequest();"
+        "  x.open('GET','/metrics',true);"
+        "  x.withCredentials=true;"
+        "  x.onload=function(){"
+        "    if(x.status!=200)return;"
+        "    var m=JSON.parse(x.responseText);"
+        "    var t=document.getElementById('mtbl');"
+        "    if(!t)return;"
+        "    var h='<tr><th>Status</th><td class=\\'val '+m.status_class+'\\'>'+m.status+'</td></tr>'"
+        "    +'<tr><th>Battery Charge</th><td class=\\'val\\'>'+m.charge+'%</td></tr>'"
+        "    +'<tr><th>Battery Voltage</th><td class=\\'val\\'>'+m.voltage+' V</td></tr>'"
+        "    +'<tr><th>Battery Runtime</th><td class=\\'val\\'>'+m.runtime+' s ('+m.runtime_min+' min)</td></tr>'"
+        "    +'<tr><th>Input Voltage</th><td class=\\'val\\'>'+m.input_voltage+' V</td></tr>'"
+        "    +'<tr><th>Load</th><td class=\\'val\\'>'+m.load+'%</td></tr>';"
+        "    if(m.beeper)h+='<tr><th>Beeper</th><td class=\\'val\\'>'+m.beeper+'</td></tr>';"
+        "    t.innerHTML=h;"
+        "  };"
+        "  x.send();"
+        "}"
+        "setInterval(refreshMetrics,10000);"
         "</script>"
         "</body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
@@ -507,12 +531,17 @@ static esp_err_t logs_handler(httpd_req_t *req)
     if (start_line < 0) start_line = 0;
     if (start_line > global_next) start_line = global_next;
 
-    /* Clamp to ring size */
+    /* Clamp to ring size and limit per response (max 100 lines per poll) */
     int available = global_next - start_line;
     if (available > LOG_RING_SIZE) {
         start_line = global_next - LOG_RING_SIZE;
         available = LOG_RING_SIZE;
     }
+    const int MAX_LINES_PER_RESPONSE = 100;
+    if (available > MAX_LINES_PER_RESPONSE) {
+        available = MAX_LINES_PER_RESPONSE;
+    }
+    int next_idx = start_line + available;
 
     httpd_resp_sendstr_chunk(req, "{\"lines\":[");
 
@@ -552,11 +581,42 @@ static esp_err_t logs_handler(httpd_req_t *req)
     }
 
     char tail[64];
-    snprintf(tail, sizeof(tail), "],\"next_idx\":%d}", global_next);
+    snprintf(tail, sizeof(tail), "],\"next_idx\":%d}", next_idx);
     httpd_resp_sendstr_chunk(req, tail);
 
     xSemaphoreGive(log_mutex);
     httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
+/* ═══════════════ GET /metrics — JSON UPS Metrics ═══════════════ */
+
+static esp_err_t metrics_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    const ups_metrics_t *m = apc_hid_get_metrics();
+
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"status\":\"%s\",\"status_class\":\"%s\","
+        "\"charge\":%.0f,\"voltage\":%.1f,\"runtime\":%.0f,\"runtime_min\":%.1f,"
+        "\"input_voltage\":%.0f,\"load\":%.0f,"
+        "\"nominal_power\":%.0f,\"input_nominal\":%.0f,\"beeper\":\"%s\"}",
+        m->status_string,
+        m->status.online ? "online" : "offline",
+        m->battery_charge,
+        m->battery_voltage,
+        m->battery_runtime, m->battery_runtime / 60.0f,
+        m->input_voltage, m->load_percent,
+        m->nominal_power,
+        m->input_voltage_nominal,
+        m->beeper_status);
+
+    httpd_resp_sendstr(req, buf);
     return ESP_OK;
 }
 
@@ -672,7 +732,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 6;
+    httpd_config.max_uri_handlers = 7;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -683,12 +743,14 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t root_uri    = { .uri = "/",        .method = HTTP_GET,  .handler = root_handler    };
     const httpd_uri_t status_uri  = { .uri = "/status",   .method = HTTP_GET,  .handler = status_handler  };
     const httpd_uri_t logs_uri    = { .uri = "/logs",     .method = HTTP_GET,  .handler = logs_handler    };
+    const httpd_uri_t metrics_uri = { .uri = "/metrics",  .method = HTTP_GET,  .handler = metrics_handler };
     const httpd_uri_t version_uri = { .uri = "/version",  .method = HTTP_GET,  .handler = version_handler };
     const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
 
     httpd_register_uri_handler(server, &root_uri);
     httpd_register_uri_handler(server, &status_uri);
     httpd_register_uri_handler(server, &logs_uri);
+    httpd_register_uri_handler(server, &metrics_uri);
     httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
 

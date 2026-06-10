@@ -115,7 +115,11 @@ esp_err_t update_check_handler(httpd_req_t *req)
 
 esp_err_t update_post_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "OTA firmware update started");
+    char content_type[64] = {0};
+    httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type));
+    
+    ESP_LOGI(TAG, "📥 OTA upload request received: %d bytes, Content-Type: %s", 
+             req->content_len, content_type[0] ? content_type : "UNKNOWN");
 
     /* Get the next OTA partition to write to */
     const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);

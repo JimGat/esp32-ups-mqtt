@@ -301,15 +301,13 @@ static void simulate_ups_data_task(void *arg)
 
 // Build timestamp - updated on every compile
 #define BUILD_TIMESTAMP __DATE__ " " __TIME__
-#ifndef FW_VERSION
-#define FW_VERSION "v0.0.0-unknown"
-#endif
+#define FIRMWARE_VERSION "1.12.1-jimgat.2"
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
     ESP_LOGI(TAG, "🚀 UPS MQTT Bridge Starting");
-    ESP_LOGI(TAG, "   Version: %s", FW_VERSION);
+    ESP_LOGI(TAG, "   Version: %s", FIRMWARE_VERSION);
     ESP_LOGI(TAG, "   Build: %s", BUILD_TIMESTAMP);
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
 

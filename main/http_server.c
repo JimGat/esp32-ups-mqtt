@@ -32,10 +32,7 @@ static app_config_t *current_config = NULL;
 #define WEB_AUTH_USER "admin"
 #define DEFAULT_PROVISIONING_PASSWORD CONFIG_PROVISIONING_AP_PASSWORD
 #define PAGE_TITLE "UPS MQTT Bridge"
-#define STATUS_TITLE "UPS MQTT Bridge Status"
-#ifndef FW_VERSION
-#define FW_VERSION "v0.0.0-unknown"
-#endif
+#define STATUS_TITLE "UPS MQTT Status"
 
 static int capture_vprintf(const char *fmt, va_list args)
 {
@@ -263,8 +260,6 @@ static const char *PAGE_STYLE =
         "overflow-x:auto;font-size:12px;max-height:500px;overflow-y:auto;line-height:1.4}"
     "a{color:#4db8ff;text-decoration:none}a:hover{text-decoration:underline}"
     ".nav{text-align:center;margin:10px 0}"
-    ".version-line{text-align:center;margin:-4px 0 12px;color:#a0a0c0;font-size:14px}"
-    ".version-line strong{color:#4db8ff}"
     ".online{color:#4caf50}.offline{color:#f44336}";
 
 static const char *PAGE_NAV =
@@ -276,7 +271,6 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
 {
     httpd_resp_sendstr_chunk(req,
         "<!DOCTYPE html><html><head>"
-        "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>");
     if (auto_refresh) {
         httpd_resp_sendstr_chunk(req, "<meta http-equiv='refresh' content='5'>");
@@ -287,15 +281,13 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
     httpd_resp_sendstr_chunk(req, PAGE_STYLE);
     httpd_resp_sendstr_chunk(req, "</style></head><body><h1>");
     httpd_resp_sendstr_chunk(req, title);
-    httpd_resp_sendstr_chunk(req, "</h1><div class=version-line>Firmware <strong>");
-    httpd_resp_sendstr_chunk(req, FW_VERSION);
-    httpd_resp_sendstr_chunk(req, "</strong> &middot; <a href=/version>Version JSON</a></div>");
+    httpd_resp_sendstr_chunk(req, "</h1>");
     httpd_resp_sendstr_chunk(req, PAGE_NAV);
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_type(req, "text/html");
     char buf[512];
 
     if (!check_basic_auth(req)) return ESP_OK;
@@ -368,7 +360,7 @@ static esp_err_t root_handler(httpd_req_t *req)
 
 static esp_err_t status_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_type(req, "text/html");
     char buf[512];
 
     if (!check_basic_auth(req)) return ESP_OK;
@@ -466,20 +458,6 @@ static esp_err_t status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* ═══════════════ GET /version — Public Firmware Version ═══════════════ */
-
-static esp_err_t version_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    char buf[192];
-    snprintf(buf, sizeof(buf),
-             "{\"name\":\"UPS MQTT Bridge\",\"version\":\"%s\",\"chipFamily\":\"ESP32-S3\"}\n",
-             FW_VERSION);
-    httpd_resp_sendstr(req, buf);
-    return ESP_OK;
-}
-
 /* ═══════════════ POST /save — Save Config & Reboot ═══════════════ */
 
 static esp_err_t save_handler(httpd_req_t *req)
@@ -532,10 +510,9 @@ static esp_err_t save_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Config saved to NVS, rebooting...");
 
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_type(req, "text/html");
     httpd_resp_sendstr_chunk(req,
         "<!DOCTYPE html><html><head>"
-        "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<style>");
     httpd_resp_sendstr_chunk(req, PAGE_STYLE);
@@ -570,7 +547,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 5;
+    httpd_config.max_uri_handlers = 4;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -578,14 +555,12 @@ esp_err_t http_server_start(app_config_t *config)
         return err;
     }
 
-    const httpd_uri_t root_uri    = { .uri = "/",        .method = HTTP_GET,  .handler = root_handler    };
-    const httpd_uri_t status_uri  = { .uri = "/status",   .method = HTTP_GET,  .handler = status_handler  };
-    const httpd_uri_t version_uri = { .uri = "/version",  .method = HTTP_GET,  .handler = version_handler };
-    const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
+    const httpd_uri_t root_uri   = { .uri = "/",       .method = HTTP_GET,  .handler = root_handler   };
+    const httpd_uri_t status_uri = { .uri = "/status",  .method = HTTP_GET,  .handler = status_handler };
+    const httpd_uri_t save_uri   = { .uri = "/save",    .method = HTTP_POST, .handler = save_handler   };
 
     httpd_register_uri_handler(server, &root_uri);
     httpd_register_uri_handler(server, &status_uri);
-    httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", httpd_config.server_port);

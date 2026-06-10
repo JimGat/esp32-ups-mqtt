@@ -364,14 +364,3 @@ If this project is useful to you, consider buying me a coffee!
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
-### Branches, Versioning, and Web Flasher Channels
-
-This project follows the same operational pattern as CYM-NM28C5:
-
-| Channel | Branch | Source | When to use |
-|---------|--------|--------|-------------|
-| Stable | `main` | GitHub Pages CDN | Tested/production flashing |
-| Dev | `dev` | raw GitHub branch assets | Latest development builds |
-
-Firmware version is defined once in `CMakeLists.txt` as `PROJECT_VER`, exposed to firmware as `FW_VERSION`, written into `docs/manifest.json`, and displayed by the device web UI. The unauthenticated endpoint `http://<device>/version` returns the current firmware version JSON before login.

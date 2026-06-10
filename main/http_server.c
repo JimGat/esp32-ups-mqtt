@@ -373,7 +373,7 @@ static esp_err_t status_handler(httpd_req_t *req)
 
     if (!check_basic_auth(req)) return ESP_OK;
 
-    send_page_header(req, STATUS_TITLE, true);
+    send_page_header(req, STATUS_TITLE, false);
 
     /* UPS Metrics */
     const ups_metrics_t *m = apc_hid_get_metrics();
@@ -440,30 +440,122 @@ static esp_err_t status_handler(httpd_req_t *req)
         (unsigned long)(current_config->publish_interval_ms / 1000));
     httpd_resp_sendstr_chunk(req, buf);
 
-    /* Serial Logs */
+    /* Serial Logs (JS-powered: polls /logs endpoint, auto-scrolls, copy button) */
     httpd_resp_sendstr_chunk(req,
         "<div class='card'><h2>Serial Logs</h2>"
-        "<button onclick=\"var t=document.getElementById('logs').innerText;navigator.clipboard.writeText(t).then(function(){var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)})\" id='cpb' style='margin-bottom:8px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Copy Logs</button>"
-        "<pre id='logs' style='max-height:600px;overflow-y:auto;font-size:12px'>");
+        "<button id='cpb' onclick=\"navigator.clipboard.writeText(document.getElementById('logs').innerText).then(function(){var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)})\" style='margin-bottom:8px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Copy Logs</button>"
+        "<button id='cls' onclick=\"document.getElementById('logs').textContent='';logIdx=0\" style='margin-left:4px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Clear</button>"
+        "<pre id='logs' style='max-height:500px;overflow-y:auto;font-size:12px'></pre>"
+        "</div>"
+        "<script>"
+        "var logIdx=0;"
+        "function fetchLogs(){"
+        "  var x=new XMLHttpRequest();"
+        "  x.onload=function(){"
+        "    if(x.status!=200)return;"
+        "    var r=JSON.parse(x.responseText);"
+        "    if(r.lines&&r.lines.length>0){"
+        "      var p=document.getElementById('logs');"
+        "      r.lines.forEach(function(l){p.appendChild(document.createTextNode(l+'\\n'))});"
+        "      p.scrollTop=p.scrollHeight;"
+        "    }"
+        "    logIdx=r.next_idx;"
+        "  };"
+        "  x.open('GET','/logs?from='+logIdx,true);"
+        "  x.send();"
+        "}"
+        "fetchLogs();"
+        "setInterval(fetchLogs,2000);"
+        "</script>"
+        "</body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
 
-    if (log_ring && log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        int start = (log_count < LOG_RING_SIZE) ? 0 : log_write_idx;
-        int count = (log_count < LOG_RING_SIZE) ? log_count : LOG_RING_SIZE;
+/* ═══════════════ GET /logs — Incremental JSON Log Stream ═══════════════ */
 
-        for (int i = 0; i < count; i++) {
-            int idx = (start + i) % LOG_RING_SIZE;
-            char escaped[420];
-            html_escape(escaped, log_ring[idx], sizeof(escaped));
-            httpd_resp_sendstr_chunk(req, escaped);
-            httpd_resp_sendstr_chunk(req, "\n");
+static esp_err_t logs_handler(httpd_req_t *req)
+{
+    /* Parse ?from=N query param to get the last index the client has seen */
+    int from_idx = 0;
+    char query[32] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[16] = {0};
+        if (httpd_query_key_value(query, "from", val, sizeof(val)) == ESP_OK) {
+            from_idx = atoi(val);
         }
-        xSemaphoreGive(log_mutex);
     }
 
-    httpd_resp_sendstr_chunk(req,
-        "</pre></div>"
-        "<script>var l=document.getElementById('logs');l.scrollTop=l.scrollHeight;</script>"
-        "</body></html>");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    if (!log_ring || !log_mutex || !xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100))) {
+        httpd_resp_sendstr(req, "{\"lines\":[],\"next_idx\":0}");
+        return ESP_OK;
+    }
+
+    /* Build JSON response with lines since from_idx */
+    /* Track absolute position: log_write_idx is the next write slot */
+    int total = (log_count < LOG_RING_SIZE) ? log_count : LOG_RING_SIZE;
+    int oldest_abs = (log_count < LOG_RING_SIZE) ? 0 : log_write_idx;
+    int newest_abs = (oldest_abs + total - 1) % LOG_RING_SIZE;
+    int global_next = (log_count < LOG_RING_SIZE) ? log_count : (log_count);
+    /* global_next is the absolute index the NEXT write will get */
+
+    /* Figure out which lines to send: everything from from_idx onward */
+    int start_line = from_idx;
+    if (start_line < 0) start_line = 0;
+    if (start_line > global_next) start_line = global_next;
+
+    /* Clamp to ring size */
+    int available = global_next - start_line;
+    if (available > LOG_RING_SIZE) {
+        start_line = global_next - LOG_RING_SIZE;
+        available = LOG_RING_SIZE;
+    }
+
+    httpd_resp_sendstr_chunk(req, "{\"lines\":[");
+
+    bool first = true;
+    for (int i = 0; i < available; i++) {
+        int abs_pos = start_line + i;
+        int ring_idx = abs_pos % LOG_RING_SIZE;
+
+        if (log_ring[ring_idx][0] != '\0') {
+            if (!first) httpd_resp_sendstr_chunk(req, ",");
+            httpd_resp_sendstr_chunk(req, "\"");
+
+            /* JSON-escape the line */
+            const char *s = log_ring[ring_idx];
+            while (*s) {
+                switch (*s) {
+                    case '"':  httpd_resp_sendstr_chunk(req, "\\\""); break;
+                    case '\\': httpd_resp_sendstr_chunk(req, "\\\\"); break;
+                    case '\n': httpd_resp_sendstr_chunk(req, "\\n");  break;
+                    case '\r': break;  /* skip CR */
+                    case '\t': httpd_resp_sendstr_chunk(req, "\\t");  break;
+                    default:
+                        if ((unsigned char)*s < 0x20) {
+                            char ubuf[8];
+                            snprintf(ubuf, sizeof(ubuf), "\\u%04x", (unsigned char)*s);
+                            httpd_resp_sendstr_chunk(req, ubuf);
+                        } else {
+                            char c[2] = {*s, 0};
+                            httpd_resp_sendstr_chunk(req, c);
+                        }
+                }
+                s++;
+            }
+            httpd_resp_sendstr_chunk(req, "\"");
+            first = false;
+        }
+    }
+
+    char tail[64];
+    snprintf(tail, sizeof(tail), "],\"next_idx\":%d}", global_next);
+    httpd_resp_sendstr_chunk(req, tail);
+
+    xSemaphoreGive(log_mutex);
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
@@ -580,7 +672,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 5;
+    httpd_config.max_uri_handlers = 6;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -590,11 +682,13 @@ esp_err_t http_server_start(app_config_t *config)
 
     const httpd_uri_t root_uri    = { .uri = "/",        .method = HTTP_GET,  .handler = root_handler    };
     const httpd_uri_t status_uri  = { .uri = "/status",   .method = HTTP_GET,  .handler = status_handler  };
+    const httpd_uri_t logs_uri    = { .uri = "/logs",     .method = HTTP_GET,  .handler = logs_handler    };
     const httpd_uri_t version_uri = { .uri = "/version",  .method = HTTP_GET,  .handler = version_handler };
     const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
 
     httpd_register_uri_handler(server, &root_uri);
     httpd_register_uri_handler(server, &status_uri);
+    httpd_register_uri_handler(server, &logs_uri);
     httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
 

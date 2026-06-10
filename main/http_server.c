@@ -18,10 +18,10 @@
 static const char *TAG = "http_server";
 
 /* ═══════════════ Log Ring Buffer ═══════════════ */
-#define LOG_RING_SIZE 80
-#define LOG_LINE_LEN  200
+#define LOG_RING_SIZE 2000
+#define LOG_LINE_LEN  160
 
-static char log_ring[LOG_RING_SIZE][LOG_LINE_LEN];
+static char (*log_ring)[LOG_LINE_LEN] = NULL;  // Dynamically allocated
 static int  log_write_idx = 0;
 static int  log_count     = 0;
 static SemaphoreHandle_t log_mutex = NULL;
@@ -42,7 +42,7 @@ static int capture_vprintf(const char *fmt, va_list args)
     va_list copy;
     va_copy(copy, args);
 
-    if (log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    if (log_ring && log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         vsnprintf(log_ring[log_write_idx], LOG_LINE_LEN, fmt, copy);
         int len = strlen(log_ring[log_write_idx]);
         if (len > 0 && log_ring[log_write_idx][len - 1] == '\n')
@@ -442,9 +442,11 @@ static esp_err_t status_handler(httpd_req_t *req)
 
     /* Serial Logs */
     httpd_resp_sendstr_chunk(req,
-        "<div class='card'><h2>Serial Logs</h2><pre id='logs'>");
+        "<div class='card'><h2>Serial Logs</h2>"
+        "<button onclick=\"var t=document.getElementById('logs').innerText;navigator.clipboard.writeText(t).then(function(){var b=document.getElementById('cpb');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy Logs'},2000)})\" id='cpb' style='margin-bottom:8px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #555;background:#333;color:#eee'>Copy Logs</button>"
+        "<pre id='logs' style='max-height:600px;overflow-y:auto;font-size:12px'>");
 
-    if (log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (log_ring && log_mutex && xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         int start = (log_count < LOG_RING_SIZE) ? 0 : log_write_idx;
         int count = (log_count < LOG_RING_SIZE) ? log_count : LOG_RING_SIZE;
 
@@ -564,8 +566,16 @@ esp_err_t http_server_start(app_config_t *config)
     /* Start log capture */
     log_mutex = xSemaphoreCreateMutex();
     if (log_mutex) {
-        original_vprintf_fn = esp_log_set_vprintf(capture_vprintf);
-        ESP_LOGI(TAG, "Log capture enabled (%d lines)", LOG_RING_SIZE);
+        // Allocate log ring buffer from heap (320KB for 2000 lines x 160 chars)
+        log_ring = malloc(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
+        if (log_ring) {
+            memset(log_ring, 0, sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
+            original_vprintf_fn = esp_log_set_vprintf(capture_vprintf);
+            ESP_LOGI(TAG, "Log capture enabled (%d lines, %dKB)", LOG_RING_SIZE,
+                     (int)(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]) / 1024));
+        } else {
+            ESP_LOGE(TAG, "Failed to allocate log ring buffer (%d lines), log capture disabled", LOG_RING_SIZE);
+        }
     }
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();

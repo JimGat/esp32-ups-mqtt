@@ -60,13 +60,20 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
     switch (report_id) {
         case 0x0C:  // Battery charge and runtime (UPS.PowerSummary)
             ESP_LOGI(TAG, "   Type: Battery Charge & Runtime (UPS.PowerSummary)");
-            if (length >= 4) {
+            // Some UPS models send charge as a single byte (0x64=100%)
+            // Others include runtime as bytes 2-3
+            if (length >= 2) {
                 target->battery_charge = (float)data[1];
-                uint16_t runtime_seconds = data[2] | (data[3] << 8);
-                target->battery_runtime = (float)runtime_seconds;
-
                 ESP_LOGI(TAG, "   ├─ Byte[1]: Battery charge = %d%%", data[1]);
-                ESP_LOGI(TAG, "   ├─ Byte[2-3]: Runtime = %d seconds (%.1f min)", runtime_seconds, runtime_seconds / 60.0f);
+
+                if (length >= 4) {
+                    uint16_t runtime_seconds = data[2] | (data[3] << 8);
+                    target->battery_runtime = (float)runtime_seconds;
+                    ESP_LOGI(TAG, "   ├─ Byte[2-3]: Runtime = %d seconds (%.1f min)", runtime_seconds, runtime_seconds / 60.0f);
+                } else {
+                    ESP_LOGI(TAG, "   ├─ Runtime: Not in this report (need 4+ bytes, got %d)", length);
+                }
+
                 ESP_LOGI(TAG, "   └─ Result: Battery %.0f%%, Runtime %.0fs",
                          target->battery_charge, target->battery_runtime);
                 updated = true;
@@ -120,12 +127,45 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0D:  // Battery voltage
-            ESP_LOGI(TAG, "   Type: Battery Voltage");
-            if (length >= 2) {
-                target->battery_voltage = (float)data[1] / 10.0f;
-                ESP_LOGI(TAG, "   └─ Battery: %.1fV", target->battery_voltage);
-                updated = true;
+        case 0x0D:  // Battery voltage (interrupt endpoint variant)
+            ESP_LOGI(TAG, "   Type: Battery Voltage (interrupt)");
+            // NOTE: Report 0x0D arrives via the interrupt endpoint with potentially
+            // different encoding than Feature Report 0x09. On APC Back-UPS XS 1000M
+            // we see alternating data: B0 13 and 64 14. These may be two separate
+            // 1-byte fields or a 16-bit value with unknown exponent.
+            // Strategy: Log raw bytes for diagnosis. Only update battery_voltage
+            // if we have NOT received a Feature Report 0x09 recently.
+            if (length >= 3) {
+                uint8_t byte1 = data[1];
+                uint8_t byte2 = data[2];
+                ESP_LOGI(TAG, "   ├─ Raw bytes: 0x%02X 0x%02X", byte1, byte2);
+                // Try 16-bit LE /100 (same as Report 0x09)
+                uint16_t raw16 = byte1 | (byte2 << 8);
+                float v_16bit = (float)raw16 / 100.0f;
+                // Try single byte /10 (legacy decode)
+                float v_8bit = (float)byte1 / 10.0f;
+                ESP_LOGI(TAG, "   ├─ 16-bit LE /100: 0x%04X → %.2fV", raw16, v_16bit);
+                ESP_LOGI(TAG, "   ├─ 8-bit /10: 0x%02X → %.1fV", byte1, v_8bit);
+                // Only use this if no good reading from Feature Report 0x09
+                // The Feature Report is more reliable for voltage
+                if (target->battery_voltage == 0.0f) {
+                    // No Feature Report 0x09 reading yet, use interrupt data
+                    target->battery_voltage = v_8bit;
+                    ESP_LOGI(TAG, "   └─ Using 8-bit decode: %.1fV (no Feature Report yet)", target->battery_voltage);
+                    updated = true;
+                } else {
+                    ESP_LOGI(TAG, "   └─ Skipping: Feature Report 0x09 already provided %.2fV", target->battery_voltage);
+                }
+            } else if (length >= 2) {
+                uint8_t byte1 = data[1];
+                ESP_LOGI(TAG, "   ├─ Raw byte: 0x%02X", byte1);
+                if (target->battery_voltage == 0.0f) {
+                    target->battery_voltage = (float)byte1 / 10.0f;
+                    ESP_LOGI(TAG, "   └─ Battery (1-byte): %.1fV", target->battery_voltage);
+                    updated = true;
+                } else {
+                    ESP_LOGI(TAG, "   └─ Skipping: Feature Report 0x09 already provided %.2fV", target->battery_voltage);
+                }
             }
             break;
 
@@ -554,3 +594,5 @@ void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buff
         strncat(buffer, "UNKNOWN", buffer_size - 1);
     }
 }
+
+

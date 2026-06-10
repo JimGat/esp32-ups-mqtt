@@ -1,7 +1,7 @@
 {
   "name": "UPS MQTT Bridge \u2014 ESP32-S3",
-  "version": "v0.1.1",
-  "build": "instant-power-events",
+  "version": "v0.2.0-dev",
+  "build": "dev",
   "chipFamily": "ESP32-S3",
   "parts": [
     {
@@ -16,5 +16,6 @@
       "path": "../binaries-esp32s3/esp32_ups_mqtt_bridge.bin",
       "offset": 65536
     }
-  ]
+  ],
+  "channel": "dev"
 }

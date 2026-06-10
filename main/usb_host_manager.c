@@ -604,6 +604,7 @@ void usb_host_task(void *arg)
     // Organized by category for clarity
     const uint8_t poll_reports[] = {
         // === CRITICAL REAL-TIME METRICS (poll every cycle) ===
+        0x16,  // Present Status Bits (online/discharging/charging/low battery) - 8-bit
         0x09,  // Battery voltage (UPS.PowerSummary.Voltage) - 16-bit, /100 for V
         0x31,  // Input voltage (UPS.Input.Voltage) - 16-bit
         0x50,  // Load percentage (UPS.PowerConverter.PercentLoad) - 8-bit
@@ -725,3 +726,4 @@ bool usb_ups_is_connected(void)
 {
     return ups_connected;
 }
+

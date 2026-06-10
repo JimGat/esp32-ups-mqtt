@@ -18,8 +18,8 @@
 static const char *TAG = "http_server";
 
 /* ═══════════════ Log Ring Buffer ═══════════════ */
-#define LOG_RING_SIZE 2000
-#define LOG_LINE_LEN  160
+#define LOG_RING_SIZE 500
+#define LOG_LINE_LEN  120
 
 static char (*log_ring)[LOG_LINE_LEN] = NULL;  // Dynamically allocated
 static int  log_write_idx = 0;
@@ -716,17 +716,23 @@ esp_err_t http_server_start(app_config_t *config)
     current_config = config;
 
     /* Start log capture */
+    ESP_LOGI(TAG, "Free heap before log buffer: %d bytes", (int)esp_get_free_heap_size());
     log_mutex = xSemaphoreCreateMutex();
     if (log_mutex) {
-        // Allocate log ring buffer from heap (320KB for 2000 lines x 160 chars)
+        // Allocate log ring buffer from heap (60KB for 500 lines x 120 chars)
         log_ring = malloc(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
         if (log_ring) {
             memset(log_ring, 0, sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]));
             original_vprintf_fn = esp_log_set_vprintf(capture_vprintf);
-            ESP_LOGI(TAG, "Log capture enabled (%d lines, %dKB)", LOG_RING_SIZE,
-                     (int)(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]) / 1024));
+            ESP_LOGI(TAG, "Log capture enabled (%d lines, %dKB), free heap after: %d bytes",
+                     LOG_RING_SIZE,
+                     (int)(sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]) / 1024),
+                     (int)esp_get_free_heap_size());
         } else {
-            ESP_LOGE(TAG, "Failed to allocate log ring buffer (%d lines), log capture disabled", LOG_RING_SIZE);
+            ESP_LOGE(TAG, "Failed to allocate log ring buffer (%d lines, %d bytes needed, %d bytes free)",
+                     LOG_RING_SIZE,
+                     (int)sizeof(char[LOG_RING_SIZE][LOG_LINE_LEN]),
+                     (int)esp_get_free_heap_size());
         }
     }
 

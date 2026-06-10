@@ -606,8 +606,10 @@ void usb_host_task(void *arg)
         // === CRITICAL REAL-TIME METRICS (poll every cycle) ===
         0x16,  // Present Status Bits (online/discharging/charging/low battery) - 8-bit
         0x09,  // Battery voltage (UPS.PowerSummary.Voltage) - 16-bit, /100 for V
-        0x31,  // Input voltage (UPS.Input.Voltage) - 16-bit
-        0x50,  // Load percentage (UPS.PowerConverter.PercentLoad) - 8-bit
+        0x31,  // Input voltage (UPS.Input.Voltage) - 16-bit, /100 for V
+        0x50,  // Load percentage (UPS.PowerConverter.PercentLoad) - 8-bit or 16-bit
+        0x0A,  // Battery runtime (UPS.PowerSummary.RunTimeToEmpty) - 16-bit, seconds
+        0x06,  // Present status (interrupt variant, also poll as backup)
 
         // === BATTERY INFORMATION ===
         0x08,  // Battery nominal voltage (UPS.PowerSummary.ConfigVoltage) - 16-bit (12V)

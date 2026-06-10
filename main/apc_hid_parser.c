@@ -118,6 +118,17 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
+        case 0x0A:  // Battery runtime (UPS.PowerSummary.RunTimeToEmpty) - Feature Report
+            ESP_LOGI(TAG, "   Type: Battery Runtime");
+            if (length >= 3) {
+                uint16_t runtime_raw = data[1] | (data[2] << 8);
+                target->battery_runtime = (float)runtime_raw;
+                ESP_LOGI(TAG, "   └─ Runtime: %ds (%.1f min) [0x%04X]",
+                         runtime_raw, runtime_raw / 60.0f, runtime_raw);
+                updated = true;
+            }
+            break;
+
         case 0x0B:  // Battery nominal voltage
             ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
             if (length >= 2) {
@@ -359,41 +370,55 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x31:  // Input voltage (UPS.Input.Voltage) - Feature Report
+        case 0x31:  // Input voltage (UPS.Input.Voltage) - Feature Report, 16-bit LE, exponent -2
             ESP_LOGI(TAG, "   Type: Input Voltage");
             if (length >= 3) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->input_voltage = (float)voltage_raw;
-                ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.0fV", voltage_raw, target->input_voltage);
+                target->input_voltage = (float)voltage_raw / 100.0f;
+                ESP_LOGI(TAG, "   └─ Input: %.1fV (0x%04X / 100)", target->input_voltage, voltage_raw);
                 updated = true;
             }
             break;
 
-        case 0x32:  // Low voltage transfer (UPS.Input.LowVoltageTransfer) - Feature Report
+        case 0x32:  // Low voltage transfer (UPS.Input.LowVoltageTransfer) - Feature Report, 16-bit LE
             ESP_LOGI(TAG, "   Type: Low Voltage Transfer");
             if (length >= 3) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->low_voltage_transfer = (float)voltage_raw;
-                ESP_LOGI(TAG, "   └─ Transfer point: %.0fV", target->low_voltage_transfer);
+                target->low_voltage_transfer = (float)voltage_raw / 100.0f;
+                ESP_LOGI(TAG, "   └─ Transfer point: %.1fV", target->low_voltage_transfer);
                 updated = true;
             }
             break;
 
-        case 0x33:  // High voltage transfer (UPS.Input.HighVoltageTransfer) - Feature Report
+        case 0x33:  // High voltage transfer (UPS.Input.HighVoltageTransfer) - Feature Report, 16-bit LE
             ESP_LOGI(TAG, "   Type: High Voltage Transfer");
             if (length >= 3) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->high_voltage_transfer = (float)voltage_raw;
-                ESP_LOGI(TAG, "   └─ Transfer point: %.0fV", target->high_voltage_transfer);
+                target->high_voltage_transfer = (float)voltage_raw / 100.0f;
+                ESP_LOGI(TAG, "   └─ Transfer point: %.1fV", target->high_voltage_transfer);
                 updated = true;
             }
             break;
 
         case 0x50:  // Load percentage (UPS.PowerConverter.PercentLoad) - Feature Report
             ESP_LOGI(TAG, "   Type: Load Percentage");
-            if (length >= 2) {
+            if (length >= 3) {
+                // Try 16-bit first (some models report hundredths)
+                uint16_t raw16 = data[1] | (data[2] << 8);
+                float load_16 = (float)raw16 / 100.0f;
+                float load_8 = (float)data[1];
+                // If 16-bit/100 gives a sane % (0-100), use it; else use 8-bit
+                if (load_16 >= 0.0f && load_16 <= 100.0f) {
+                    target->load_percent = load_16;
+                    ESP_LOGI(TAG, "   └─ Load: %.1f%% (16-bit 0x%04X / 100)", target->load_percent, raw16);
+                } else {
+                    target->load_percent = load_8;
+                    ESP_LOGI(TAG, "   └─ Load: %.0f%% (8-bit 0x%02X)", target->load_percent, data[1]);
+                }
+                updated = true;
+            } else if (length >= 2) {
                 target->load_percent = (float)data[1];
-                ESP_LOGI(TAG, "   └─ Load: %.0f%%", target->load_percent);
+                ESP_LOGI(TAG, "   └─ Load: %.0f%% (8-bit)", target->load_percent);
                 updated = true;
             }
             break;

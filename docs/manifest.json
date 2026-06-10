@@ -1,5 +1,5 @@
 {
-  "name": "UPS MQTT Bridge \u2014 ESP32-S3",
+  "name": "UPS MQTT Bridge — ESP32-S3",
   "version": "v0.3.5-dev",
   "build": "dev",
   "chipFamily": "ESP32-S3",
@@ -13,8 +13,12 @@
       "offset": 32768
     },
     {
+      "path": "../binaries-esp32s3/ota_data_initial.bin",
+      "offset": 53248
+    },
+    {
       "path": "../binaries-esp32s3/esp32_ups_mqtt_bridge.bin",
-      "offset": 65536
+      "offset": 131072
     }
   ],
   "channel": "dev"

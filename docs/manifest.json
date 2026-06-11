@@ -1,6 +1,6 @@
 {
   "name": "UPS MQTT Bridge — ESP32-S3",
-  "version": "v0.3.12-dev",
+  "version": "v0.3.13-dev",
   "build": "dev",
   "chipFamily": "ESP32-S3",
   "parts": [

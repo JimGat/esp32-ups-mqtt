@@ -146,6 +146,7 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 //══════════════════════════════════════════════════════════════════════════════
 // These variables track the current state of the USB connection
 static bool ups_connected = false;           // Is UPS physically connected?
+static bool hid_report_desc_requested = false; // Flag to request HID Report Descriptor from main task
 static SemaphoreHandle_t usb_mutex = NULL;   // Mutex for USB library access
 static usb_host_client_handle_t usb_client = NULL;  // Our USB client handle
 static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
@@ -202,8 +203,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                     ESP_LOGE(TAG, "Failed to claim interface: %s", esp_err_to_name(err));
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
-                    // 🔍 Evil Hardware Hacker: Dump the HID Report Descriptor to find exact Report IDs
-                    request_hid_report_descriptor(ups_device, HID_INTERFACE);
+                    // Flag to request HID Report Descriptor from the main task (safe context)
+                    hid_report_desc_requested = true;
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)
@@ -697,6 +698,14 @@ void usb_host_task(void *arg)
 
     while (1) {
         loop_count++;
+
+        // 🔍 Evil Hardware Hacker: Check if we need to request the HID Report Descriptor
+        // This must be done from the main task context, NOT the event callback
+        if (ups_connected && !hid_report_desc_requested) {
+            // We set the flag to true immediately to prevent multiple requests
+            hid_report_desc_requested = true; 
+            request_hid_report_descriptor(ups_device, HID_INTERFACE);
+        }
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {

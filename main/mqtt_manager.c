@@ -9,7 +9,7 @@ static const char *TAG = "mqtt_manager";
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_connected = false;
 
-// Device ID based on MAC address (e.g., "apc_ups_d0cf132fdfdc")
+// Device ID based on MAC address (e.g., "ups_bridge_d0cf132fdfdc")
 static char device_id[64] = {0};
 static char mqtt_base_topic[96] = {0};
 static uint8_t device_mac[6] = {0};
@@ -57,7 +57,7 @@ static void generate_device_id(const char *label)
     if (sanitized[0] != '\0') {
         snprintf(device_id, sizeof(device_id), "%s", sanitized);
     } else {
-        snprintf(device_id, sizeof(device_id), "apc_ups_%02x%02x%02x%02x%02x%02x",
+        snprintf(device_id, sizeof(device_id), "ups_bridge_%02x%02x%02x%02x%02x%02x",
                  device_mac[0], device_mac[1], device_mac[2],
                  device_mac[3], device_mac[4], device_mac[5]);
     }
@@ -232,7 +232,7 @@ esp_err_t mqtt_publish_power_event(const char *event_name, const ups_metrics_t *
     char topic[128];
     char payload[512];
 
-    snprintf(topic, sizeof(topic), "apc_ups/%s/events/power", device_id);
+    snprintf(topic, sizeof(topic), "ups_bridge/%s/events/power", device_id);
     snprintf(payload, sizeof(payload),
              "{"
              "\"event\":\"%s\","

@@ -132,7 +132,7 @@ static void mqtt_publish_task(void *arg)
                 ESP_LOGI(TAG, "═══════════════════════════════════════════");
                 ESP_LOGI(TAG, "📤 PUBLISHING TO MQTT");
                 ESP_LOGI(TAG, "   Broker: %s", app_config.mqtt_url);
-                ESP_LOGI(TAG, "   Base Topic: homeassistant/sensor/apc_ups");
+                ESP_LOGI(TAG, "   Base Topic: homeassistant/sensor/ups_bridge");
                 ESP_LOGI(TAG, "");
 
                 // Publish key metrics with detailed logging

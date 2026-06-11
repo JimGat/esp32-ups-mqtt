@@ -233,7 +233,7 @@ Each model section should include:
 
 | Field | Report | Type | Sample | Status |
 |---|---:|---|---|---|
-| Status bitfield | `0x09` | Input/Feature | `09 A8 4A` online | Confirmed report, bit meanings partly pending |
+| Status bitfield | `0x09` | Input/Feature | `09 A8 4A` online | Confirmed report; bit 3=OL and bit 5=CHRG for online/charging sample; alarm bits pending |
 | Battery charge | `0x0C` | Feature | `0C 64` = 100% | Confirmed |
 | Runtime | `0x0A` | Feature | `0A C0 12` = 4800s | Confirmed |
 | Battery voltage-like | `0x0D` | Input/Feature | `0D B0 13` = raw 5040 | Likely, scale pending validation |
@@ -250,3 +250,8 @@ Open SMT2200 items:
 - Direct input voltage report is not confirmed.
 - Direct load percent report is not confirmed.
 - Voltage-like report scaling for `0x0D` and `0x0B` needs independent validation.
+
+
+### v0.3.26-dev status calibration note
+
+Jim confirmed the physical SMT2200 state for online sample `09 A8 4A`: the unit was online, charging, carrying about 14% load, not overloaded, and did not need battery replacement. Therefore v0.3.26-dev treats bit 3 as `OL` and bit 5 as `CHRG`. Bits 7 and 11 remain unassigned for this model and must not be rendered as `OVER` or `RB` from this sample.

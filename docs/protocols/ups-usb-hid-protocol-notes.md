@@ -201,3 +201,8 @@ Future manufacturer/model table implementation rules live in `docs/protocols/ups
 ### v0.3.25-dev status safety note
 
 SMT2200 report `0x09` online sample `09 A8 4A` sets bits `3, 5, 7, 9, 11, 14`. Earlier v0.3.24-dev mapped several of these tentatively, which could render false status strings such as `OL CHRG OVER RB`. v0.3.25-dev only treats bit 3 as the known-online indicator and logs the remaining raw status bits without assigning alarm labels until on-battery/fault captures confirm their meanings.
+
+
+### v0.3.26-dev status calibration note
+
+Jim confirmed the physical SMT2200 state for online sample `09 A8 4A`: the unit was online, charging, carrying about 14% load, not overloaded, and did not need battery replacement. Therefore v0.3.26-dev treats bit 3 as `OL` and bit 5 as `CHRG`. Bits 7 and 11 remain unassigned for this model and must not be rendered as `OVER` or `RB` from this sample.

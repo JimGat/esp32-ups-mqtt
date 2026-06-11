@@ -36,7 +36,7 @@ Recommended fields for each protocol profile:
 | USB VID:PID | `051D:0003` |
 | Project target | Jim's desk UPS bridge |
 | Descriptor source | ESP32 `/usb-debug` descriptor dump, `usbdump.txt` |
-| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison. |
+| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison by default; v0.3.22+ can optionally include the raw setup packet for deep USB debugging. |
 | HID descriptor start | `05 84 09 04 A1 01 ...` |
 | Family | HID Power Device / Battery System, Smart-UPS variant |
 
@@ -63,6 +63,14 @@ For HID parsing, strip these 8 bytes. The real report descriptor begins at:
 ```text
 05 84 09 04 A1 01
 ```
+
+
+### ESP32 Debug Views
+
+Starting in v0.3.22-dev, `/usb-debug` has two descriptor dump views:
+
+- **Payload-only** (default): strips the 8-byte USB control SETUP packet and starts at the real HID descriptor (`05 84 ...`). This is best for protocol decoding and Linux `usbhid-dump` comparison.
+- **Raw-control** (optional checkbox): includes the 8-byte SETUP packet (`81 06 00 22 00 00 00 02`) before the descriptor payload. This is best for debugging ESP-IDF USB control-transfer behavior.
 
 ### Confirmed / Likely Reports
 

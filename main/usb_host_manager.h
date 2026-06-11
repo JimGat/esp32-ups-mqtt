@@ -30,6 +30,7 @@ typedef struct {
     usb_debug_mode_t mode;
     bool capture_interrupt_reports;
     bool capture_feature_reports;
+    bool include_control_setup;
     bool log_to_esp_log;
 } usb_debug_config_t;
 

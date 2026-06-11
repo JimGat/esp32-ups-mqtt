@@ -831,6 +831,7 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "<label>Mode</label><select name='mode'><option value='off'>Normal Bridge</option><option value='passive'>Passive Capture</option><option value='active'>Active Debug</option></select>"
         "<label><input type='checkbox' name='cap_int' value='1' checked> Capture interrupt-IN reports</label>"
         "<label><input type='checkbox' name='cap_feat' value='1'> Capture normal GET_REPORT polls</label>"
+        "<label><input type='checkbox' name='raw_setup' value='1'> Include raw 8-byte USB control SETUP packet in descriptor dumps</label>"
         "<label><input type='checkbox' name='log' value='1'> Mirror debug records to ESP log</label>"
         "<button type='submit'>Apply Debug Mode</button></form>"
         "<form method='POST' action='/api/usb-debug/descriptor'><button type='submit'>Dump HID Report Descriptor</button></form>"
@@ -856,8 +857,8 @@ static esp_err_t usb_debug_state_handler(httpd_req_t *req)
     usb_debug_get_state(&st); usb_debug_get_config(&cfg);
     char buf[512];
     snprintf(buf, sizeof(buf),
-        "{\"mode\":\"%s\",\"ups_connected\":%s,\"capture_interrupt\":%s,\"capture_feature\":%s,\"log_to_esp_log\":%s,\"interrupt_reports_seen\":%lu,\"feature_reports_seen\":%lu,\"descriptor_dumps\":%lu,\"errors\":%lu,\"dropped_records\":%lu,\"last_activity_ms\":%lld}",
-        debug_mode_name(cfg.mode), st.ups_connected ? "true" : "false", cfg.capture_interrupt_reports ? "true" : "false", cfg.capture_feature_reports ? "true" : "false", cfg.log_to_esp_log ? "true" : "false", (unsigned long)st.interrupt_reports_seen, (unsigned long)st.feature_reports_seen, (unsigned long)st.descriptor_dumps, (unsigned long)st.errors, (unsigned long)st.dropped_records, (long long)st.last_activity_ms);
+        "{\"mode\":\"%s\",\"ups_connected\":%s,\"capture_interrupt\":%s,\"capture_feature\":%s,\"include_control_setup\":%s,\"log_to_esp_log\":%s,\"interrupt_reports_seen\":%lu,\"feature_reports_seen\":%lu,\"descriptor_dumps\":%lu,\"errors\":%lu,\"dropped_records\":%lu,\"last_activity_ms\":%lld}",
+        debug_mode_name(cfg.mode), st.ups_connected ? "true" : "false", cfg.capture_interrupt_reports ? "true" : "false", cfg.capture_feature_reports ? "true" : "false", cfg.include_control_setup ? "true" : "false", cfg.log_to_esp_log ? "true" : "false", (unsigned long)st.interrupt_reports_seen, (unsigned long)st.feature_reports_seen, (unsigned long)st.descriptor_dumps, (unsigned long)st.errors, (unsigned long)st.dropped_records, (long long)st.last_activity_ms);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     return httpd_resp_sendstr(req, buf);
@@ -894,6 +895,7 @@ static esp_err_t usb_debug_config_handler(httpd_req_t *req)
     else cfg.mode = USB_DEBUG_MODE_OFF;
     cfg.capture_interrupt_reports = strstr(body, "cap_int=") != NULL;
     cfg.capture_feature_reports = strstr(body, "cap_feat=") != NULL;
+    cfg.include_control_setup = strstr(body, "raw_setup=") != NULL;
     cfg.log_to_esp_log = strstr(body, "log=") != NULL;
     esp_err_t err = usb_debug_set_config(&cfg);
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));

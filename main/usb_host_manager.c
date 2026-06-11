@@ -83,26 +83,39 @@ static void usb_debug_record_add(usb_debug_record_type_t type, uint8_t report_id
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
-        ESP_LOGI(TAG, "=== HID REPORT DESCRIPTOR (%d bytes) ===", transfer->actual_num_bytes);
-        for (int i = 0; i < transfer->actual_num_bytes; i += 16) {
+        // usb_host_transfer_submit_control() leaves the 8-byte SETUP packet at
+        // data_buffer[0..7], followed by the returned IN data. For a clean
+        // usbhid-dump-style descriptor view, expose only the returned payload.
+        const int setup_len = sizeof(usb_setup_packet_t);
+        int payload_len = transfer->actual_num_bytes - setup_len;
+        if (payload_len < 0) payload_len = 0;
+        const uint8_t *payload = transfer->data_buffer + setup_len;
+
+        ESP_LOGI(TAG, "=== HID REPORT DESCRIPTOR payload=%d bytes raw_transfer=%d bytes ===",
+                 payload_len, transfer->actual_num_bytes);
+        ESP_LOGI(TAG, "Descriptor setup packet stripped from debug records (8 bytes)");
+        for (int i = 0; i < payload_len; i += 16) {
             char line[80];
             int offset = 0;
             for (int j = 0; j < 16; j++) {
-                if (i + j < transfer->actual_num_bytes) {
-                    offset += sprintf(&line[offset], "%02x ", transfer->data_buffer[i + j]);
+                if (i + j < payload_len) {
+                    offset += sprintf(&line[offset], "%02x ", payload[i + j]);
                 } else {
                     offset += sprintf(&line[offset], "   ");
                 }
             }
             ESP_LOGI(TAG, "%04x: %s", i, line);
         }
-        for (int i = 0; i < transfer->actual_num_bytes; i += USB_DEBUG_MAX_RECORD_DATA) {
-            char note[48];
-            int chunk = transfer->actual_num_bytes - i;
+        for (int i = 0; i < payload_len; i += USB_DEBUG_MAX_RECORD_DATA) {
+            char note[56];
+            int chunk = payload_len - i;
             if (chunk > USB_DEBUG_MAX_RECORD_DATA) chunk = USB_DEBUG_MAX_RECORD_DATA;
-            snprintf(note, sizeof(note), "descriptor offset %d", i);
-            usb_debug_record_add(USB_DEBUG_REC_DESCRIPTOR, 0, 0, transfer->data_buffer + i, chunk, note);
+            snprintf(note, sizeof(note), "descriptor payload offset %d", i);
+            usb_debug_record_add(USB_DEBUG_REC_DESCRIPTOR, 0, 0, payload + i, chunk, note);
         }
+        char summary[80];
+        snprintf(summary, sizeof(summary), "descriptor complete payload=%d raw=%d", payload_len, transfer->actual_num_bytes);
+        usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, summary);
     } else {
         ESP_LOGE(TAG, "Failed to get HID Report Descriptor: %d", transfer->status);
         usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, transfer->status, NULL, 0, "descriptor failed");

@@ -1,0 +1,130 @@
+# UPS USB HID Protocol Notes
+
+This document is the seed for manufacturer/model-specific UPS protocol tables used by the ESP32 UPS MQTT Bridge.
+
+The goal is to stop hardcoding one UPS family's HID report IDs into all models. Each detected manufacturer/model should eventually select a small protocol profile: known VID/PID, expected HID reports, scaling rules, status bit layout, and model-specific caveats.
+
+## Table Schema Draft
+
+Recommended fields for each protocol profile:
+
+| Field | Purpose |
+|---|---|
+| `manufacturer` | Human-readable manufacturer name, e.g. `APC` |
+| `model_family` | Broad compatibility family, e.g. `Smart-UPS HID` |
+| `model` | Specific tested model, e.g. `SMT2200` |
+| `vid` / `pid` | USB VID/PID used for detection |
+| `descriptor_prefix_skip` | Bytes to strip from ESP32 debug transfer records before descriptor decode. Usually `8` for control SETUP packet artifact, `0` for pure descriptor files. |
+| `status_report_id` | Report ID carrying online/on-battery/charging/discharging flags |
+| `runtime_report_id` | Report ID carrying estimated runtime, if confirmed |
+| `battery_charge_report_id` | Remaining capacity / battery charge report |
+| `battery_voltage_report_id` | Battery voltage report |
+| `input_voltage_report_id` | Input voltage report, if confirmed |
+| `load_percent_report_id` | Load percent report, if confirmed |
+| `beeper_report_id` | Audible alarm / beeper control/status report |
+| `vendor_reports` | Vendor-page report IDs to retain for future decoding |
+| `unsupported_reports` | Known report IDs that stall or are wrong for this model |
+| `confidence` | `confirmed`, `likely`, or `tentative` |
+| `notes` | Human-readable caveats and sample payloads |
+
+## APC Smart-UPS SMT2200
+
+| Field | Value |
+|---|---|
+| Manufacturer | APC / Schneider Electric |
+| Model | Smart-UPS SMT2200 |
+| USB VID:PID | `051D:0003` |
+| Project target | Jim's desk UPS bridge |
+| Descriptor source | ESP32 `/usb-debug` descriptor dump, `usbdump.txt` |
+| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison. |
+| HID descriptor start | `05 84 09 04 A1 01 ...` |
+| Family | HID Power Device / Battery System, Smart-UPS variant |
+
+### Important Capture Note
+
+The v0.3.20 ESP32 debug output included this 8-byte USB control SETUP packet before the actual descriptor payload:
+
+```text
+81 06 00 22 00 00 00 02
+```
+
+That means:
+
+| Byte(s) | Meaning |
+|---|---|
+| `81` | IN, Standard, Interface |
+| `06` | GET_DESCRIPTOR |
+| `00 22` | Descriptor type `0x22`, HID Report Descriptor |
+| `00 00` | Interface 0 |
+| `00 02` | Requested length `0x0200` / 512 bytes |
+
+For HID parsing, strip these 8 bytes. The real report descriptor begins at:
+
+```text
+05 84 09 04 A1 01
+```
+
+### Confirmed / Likely Reports
+
+| Report ID | Direction | HID Usage / Meaning | Mapping | Confidence | Notes |
+|---:|---|---|---|---|---|
+| `0x0C` | Input + Feature | Remaining Capacity | `battery_charge` | Confirmed descriptor, confirmed runtime behavior | Likely payload byte after report ID is percent. |
+| `0x0D` | Input + Feature | Voltage-like Battery System value | `battery_voltage` | Confirmed descriptor, confirmed runtime behavior | Unit suggests volts. Use live payload samples to confirm scale. |
+| `0x0A` | Feature | Runtime/config-style value | `battery_runtime` currently | Likely | Existing parser saw `0A C0 12` as 4800 seconds / 80 min. Keep mapping but verify descriptor semantics/scaling. |
+| `0x07` | Input + Feature bitfield | PresentStatus-style flags | `status`, `power_failure`, flags | Likely/needs bit confirmation | Dense 1-bit fields include AC Present, Battery Present, Overload, Shutdown Requested, Charging, Discharging, Need Replacement, Below Remaining Capacity Limit, and other status/vendor bits. |
+| `0x14` | Input + Feature-like | Audible Alarm Control | `beeper_status` | Likely | 8-bit enum, logical range 1..3. Do not expose writes until SET_REPORT is deliberately implemented and gated. |
+| `0x11` | Feature | Capacity / low-charge threshold style | `battery_charge_low` | Likely | Prior live debug showed `11 0A` = 10%. |
+
+### Vendor Reports to Preserve
+
+These appear on vendor page `0xFF86` and should be captured for future decoding, not discarded:
+
+| Report ID | Direction | Size | Notes |
+|---:|---|---:|---|
+| `0x89` | Input | 63 bytes | Vendor input report, usage `0xFD` |
+| `0x90` | Output | 63 bytes | Vendor output report, usage `0xFC`; do not use until write operations are intentionally supported. |
+| `0x96` | Feature | 63 bytes | Vendor feature report, usage `0xF1` |
+| `0x8D` | Feature | 2 bytes | Vendor feature report, usage `0xF7` |
+| `0x8E` | Feature | 2 bytes | Vendor feature report, usage `0xF6` |
+| `0x93` | Feature | 2 bytes | Vendor feature report, usage `0xF3` |
+| `0x94` | Feature | 2 bytes | Vendor feature report, usage `0xF2` |
+| `0x92` | Feature | likely 2 bytes | Probable vendor feature report, usage `0xF4`; final descriptor tail was truncated in first dump, verify with v0.3.21+ clean dump. |
+
+### Known Bad / Not Universal
+
+| Report ID | Old Meaning | SMT2200 Status | Notes |
+|---:|---|---|---|
+| `0x31` | Back-UPS input voltage | Do not assume / likely stalls | This came from Back-UPS assumptions and should not be used for SMT2200 without descriptor confirmation. |
+| `0x50` | Back-UPS load percent | Do not assume / likely stalls | SMT2200 descriptor points toward status/report `0x07` and/or vendor reports for load-related data. |
+
+### Status Bitfield Hypothesis for Report `0x07`
+
+Report `0x07` appears to be a packed one-bit PresentStatus-style report. Descriptor-derived usage order suggests the firmware should decode cautiously and expose uncertain bits as raw flags until confirmed with live power events.
+
+Likely flags include:
+
+| Usage | Meaning |
+|---|---|
+| AC Present | Online / line power present |
+| Battery Present | Battery installed/present |
+| Overload | UPS overloaded |
+| Shutdown Requested | UPS has requested shutdown |
+| Charging | Battery charging |
+| Discharging | On battery / battery discharging |
+| Need Replacement | Replace battery |
+| Below Remaining Capacity Limit | Low battery / below threshold |
+
+### Next Capture Tasks
+
+1. Use v0.3.21+ `/usb-debug` to generate a clean descriptor dump.
+2. Confirm descriptor payload length and final tail bytes, especially likely report `0x92`.
+3. Manually GET_REPORT likely IDs and preserve sample payloads:
+   - `0x07` status bitfield
+   - `0x0C` battery charge
+   - `0x0D` battery voltage
+   - `0x0A` runtime
+   - `0x11` low charge threshold
+   - `0x14` beeper/audible alarm
+   - vendor IDs `0x89`, `0x96`, `0x8D`, `0x8E`, `0x92`, `0x93`, `0x94`
+4. Compare status report before/after a controlled line-power pull if safe.
+5. Only after read-only mappings are confirmed, consider model-specific write/SET_REPORT support.

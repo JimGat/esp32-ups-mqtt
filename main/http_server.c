@@ -872,7 +872,7 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     char line[512];
     for (size_t i = 0; i < n; i++) {
-        char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1]; int pos = 0;
+        char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1] = {0}; int pos = 0;
         size_t data_len = recs[i].length > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : recs[i].length;
         for (size_t b = 0; b < data_len && pos < (int)sizeof(hex) - 4; b++) pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", recs[i].data[b]);
         snprintf(line, sizeof(line), "%lu %lldms type=%d report=0x%02X status=%u len=%u note=%s data=%s\n", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms, recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, recs[i].note, hex);

@@ -4,7 +4,7 @@
 
 This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc) by Albin Amat, with attribution preserved but without carrying upstream local configuration history into this repo.
 
-## Current Status: v0.3.20-dev
+## Current Status: v0.3.21-dev
 - **Target Hardware**: ESP32-S3 (USB OTG on GPIO19=D-, GPIO20=D+)
 - **UPS Support**: APC Back-UPS (fully working) and Smart-UPS SMT2200 (VID:PID 051D:0003).
 - **MQTT Path**: `homeassistant/sensor/ups_bridge` / `ups_bridge/<device_id>/events/power`
@@ -15,6 +15,7 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
   - 2000ms USB timeouts to prevent SMT2200 "late callback" memory leaks.
 - **USB Debug Mode**: Web UI-controlled, runtime-only HID debugger for descriptor dumps and manual GET_REPORT probing.
 - **USB Debug Transport**: Descriptor and GET_REPORT control transfers use 64-byte-aligned allocation and USB-task-owned command queue for ESP-IDF host safety.
+- **Protocol Notes**: APC SMT2200 HID findings are documented in `docs/protocols/ups-usb-hid-protocol-notes.md` as the seed for manufacturer/model tables.
 - **Pending**: Dynamic HID Report Descriptor parsing for SMT2200 Input Voltage & Load. (See *Protocol Extraction* below).
 
 ## JimGat Fork Changes

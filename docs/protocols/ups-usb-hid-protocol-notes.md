@@ -196,3 +196,8 @@ Future manufacturer/model table implementation rules live in `docs/protocols/ups
    - vendor IDs `0x89`, `0x96`, `0x8D`, `0x8E`, `0x92`, `0x93`, `0x94`
 4. Compare status report before/after a controlled line-power pull if safe.
 5. Only after read-only mappings are confirmed, consider model-specific write/SET_REPORT support.
+
+
+### v0.3.25-dev status safety note
+
+SMT2200 report `0x09` online sample `09 A8 4A` sets bits `3, 5, 7, 9, 11, 14`. Earlier v0.3.24-dev mapped several of these tentatively, which could render false status strings such as `OL CHRG OVER RB`. v0.3.25-dev only treats bit 3 as the known-online indicator and logs the remaining raw status bits without assigning alarm labels until on-battery/fault captures confirm their meanings.

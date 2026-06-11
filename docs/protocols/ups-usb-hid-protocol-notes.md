@@ -129,9 +129,9 @@ The clean v0.3.22 payload-only dump returned exactly 512 descriptor bytes and en
 ### Next Capture Tasks
 
 1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.
-2. Confirm descriptor payload length and final tail bytes, especially likely report `0x92`.
+2. Descriptor length/tail confirmed: 515-byte payload, final report `0x92`, closing `C0`.
 3. Manually GET_REPORT likely IDs and preserve sample payloads:
-   - `0x07` status bitfield
+   - `0x09` status bitfield / PresentStatus flags
    - `0x0C` battery charge
    - `0x0D` battery voltage
    - `0x0A` runtime

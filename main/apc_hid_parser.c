@@ -1,3 +1,27 @@
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * APC HID PARSER - Architecture & Protocol Notes
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PURPOSE:
+ * Decodes raw USB HID reports from APC UPS devices into a unified `ups_metrics_t`
+ * struct for MQTT publishing.
+ *
+ * REPORT ID MAPPING (Back-UPS vs Smart-UPS):
+ * - 0x0C: Battery Charge & Runtime (Works on both)
+ * - 0x06: Status Flags (Online, Charging, Discharging) (Works on both)
+ * - 0x0D: Battery Voltage (Works on both)
+ * - 0x31: Input Voltage (⚠️ HARDCODED FOR BACK-UPS. STALLS ON SMT2200)
+ * - 0x50: Load Percent    (⚠️ HARDCODED FOR BACK-UPS. STALLS ON SMT2200)
+ *
+ * PENDING TASK (SMT2200 Support):
+ * The Smart-UPS SMT2200 (VID:PID 051D:0003) uses different Report IDs for
+ * Input Voltage and Load. Hardcoded requests for 0x31/0x50 will STALL.
+ * Solution: Extract the HID Report Descriptor via Linux `usbhid-dump -m 051d`,
+ * decode the dynamic Usage Page/Usage ID mappings, and update this parser
+ * to route requests based on the detected UPS model.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
 #include "apc_hid_parser.h"
 #include "esp_log.h"
 #include <string.h>

@@ -180,6 +180,8 @@ v0.3.24-dev adds config-selectable profiles:
 
 SMT2200 fields still marked scale/bit-pending are intentionally conservative in the web/MQTT layer until more state-change captures are available.
 
+Future manufacturer/model table implementation rules live in `docs/protocols/ups-profile-table-design.md`. Use that document before adding new UPS profiles or promoting tentative fields to confirmed parser mappings.
+
 ### Next Capture Tasks
 
 1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.

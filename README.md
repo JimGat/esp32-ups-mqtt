@@ -84,6 +84,8 @@ The config page includes a UPS Make / Model Profile selector:
 
 Profile changes are stored in NVS and applied after saving settings and restarting the device.
 
+Future manufacturer/model tables are documented in `docs/protocols/ups-profile-table-design.md`. That guide defines the profile table schema, confidence levels, auto-detect rules, capability-aware Web/MQTT behavior, and the safe expansion process for new UPS makes and models.
+
 ## USB Debug Mode
 
 Open `http://<device-ip>/usb-debug` after logging in. This page turns the bridge into a small, read-only USB HID lab without disabling Wi-Fi, HTTP, logs, or Web OTA.

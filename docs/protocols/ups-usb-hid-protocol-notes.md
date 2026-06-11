@@ -89,7 +89,7 @@ These appear on vendor page `0xFF86` and should be captured for future decoding,
 
 | Report ID | Direction | Size | Notes |
 |---:|---|---:|---|
-| `0x89` | Input | 63 bytes | Vendor input report, usage `0xFD` |
+| `0x89` | Input | 63 bytes | Vendor input report, usage `0xFD`; Feature GET_REPORT correctly returns `ESP_ERR_NOT_SUPPORTED` because it is not a Feature report. |
 | `0x90` | Output | 63 bytes | Vendor output report, usage `0xFC`; do not use until write operations are intentionally supported. |
 | `0x96` | Feature | 63 bytes | Vendor feature report, usage `0xF1` |
 | `0x8D` | Feature | 2 bytes | Vendor feature report, usage `0xF7` |
@@ -140,6 +140,22 @@ Captured from Jim's APC Smart-UPS SMT2200 while online / line power present, usi
 | `0x0B` | `0B 4A 15` | 5450 | Voltage usage report. Possible nominal/config voltage or model-specific value; scale pending. | Confirmed sample, meaning pending |
 | `0x11` | `11 0A` | 10 | Low charge threshold = 10% | Confirmed |
 | `0x14` | `14 02` | 2 | Audible alarm / beeper enum = 2 | Confirmed sample, enum labels pending |
+
+
+### Confirmed Vendor / Alternate GET_REPORT Samples
+
+Captured from Jim's APC Smart-UPS SMT2200 while online / line power present.
+
+| Request | Result | Decoded Raw | Notes |
+|---|---|---:|---|
+| Input `0x09`, len 16 | `09 A8 4A` | `0x4AA8` / 19112 | Same value as Feature `0x09`; confirms report `0x09` is available as both Input and Feature and can be used for status. Bits set online: 3, 5, 7, 9, 11, 14. |
+| Feature `0x89`, len 64 | `ESP_ERR_NOT_SUPPORTED` | n/a | Descriptor marks `0x89` as vendor Input, not Feature. Try report type `1` if needed. |
+| Feature `0x96`, len 64 | `96 00` | 0 | Vendor Feature usage `0xF1`; currently zero while online. |
+| Feature `0x8D`, len 8 | `8D 00 00` | 0 | Vendor Feature usage `0xF7`; currently zero. |
+| Feature `0x8E`, len 8 | `8E 00 00` | 0 | Vendor Feature usage `0xF6`; currently zero. |
+| Feature `0x92`, len 8 | `92 03 00` | 3 | Vendor Feature usage `0xF4`; nonzero online sample. |
+| Feature `0x93`, len 8 | `93 01 00` | 1 | Vendor Feature usage `0xF3`; nonzero online sample. |
+| Feature `0x94`, len 8 | `94 01 00` | 1 | Vendor Feature usage `0xF2`; nonzero online sample. |
 
 ### Next Capture Tasks
 

@@ -73,6 +73,7 @@
 #include <string.h>
 
 static const char *TAG = "usb_host";
+static usb_host_client_handle_t usb_client = NULL;  // Our USB client handle (declared before descriptor helper)
 
 // Forward declarations used by the runtime USB debug command queue.
 static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, uint8_t *buffer, size_t buffer_size, size_t *actual_length);
@@ -111,31 +112,38 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
     usb_transfer_t *ctrl_xfer = NULL;
-    size_t xfer_size = sizeof(usb_setup_packet_t) + 512;
-    
-    esp_err_t err = usb_host_transfer_alloc(xfer_size, 0, &ctrl_xfer);
+    const size_t payload_len = 512;
+    const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
+    const size_t alloc_size = (xfer_size + 63) & ~((size_t)63);  // ESP-IDF USB host wants 64-byte aligned allocation sizes
+
+    esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &ctrl_xfer);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to alloc ctrl xfer: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to alloc descriptor ctrl xfer: %s", esp_err_to_name(err));
+        usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, err, NULL, 0, "descriptor alloc failed");
         return;
     }
+    memset(ctrl_xfer->data_buffer, 0, alloc_size);
 
     ctrl_xfer->device_handle = dev_hdl;
     ctrl_xfer->bEndpointAddress = 0;
     ctrl_xfer->callback = hid_report_desc_cb;
     ctrl_xfer->context = NULL;
-    ctrl_xfer->timeout_ms = 2000;
+    ctrl_xfer->timeout_ms = 3000;
     ctrl_xfer->num_bytes = xfer_size;
 
+    // Standard GET_DESCRIPTOR(HID Report, type 0x22) against interface 0.
+    // Use the official setup packet layout but keep allocation aligned above.
     usb_setup_packet_t *setup = (usb_setup_packet_t *)ctrl_xfer->data_buffer;
     setup->bmRequestType = USB_BM_REQUEST_TYPE_DIR_IN | USB_BM_REQUEST_TYPE_TYPE_STANDARD | USB_BM_REQUEST_TYPE_RECIP_INTERFACE;
     setup->bRequest = USB_B_REQUEST_GET_DESCRIPTOR;
-    setup->wValue = (0x22 << 8) | 0; // 0x22 = HID Report Descriptor, Index 0
+    setup->wValue = (0x22 << 8) | 0;
     setup->wIndex = intf_num;
-    setup->wLength = 512;
+    setup->wLength = payload_len;
 
-    err = usb_host_transfer_submit(ctrl_xfer);
+    usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor submit");
+    err = usb_host_transfer_submit_control(usb_client, ctrl_xfer);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to submit ctrl xfer: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to submit descriptor ctrl xfer: %s", esp_err_to_name(err));
         usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, err, NULL, 0, "descriptor submit failed");
         usb_host_transfer_free(ctrl_xfer);
     } else {
@@ -162,7 +170,6 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 // These variables track the current state of the USB connection
 static bool ups_connected = false;           // Is UPS physically connected?
 static SemaphoreHandle_t usb_mutex = NULL;   // Mutex for USB library access
-static usb_host_client_handle_t usb_client = NULL;  // Our USB client handle
 static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 
 // Runtime USB debug mode. This is intentionally NOT persisted to NVS:
@@ -337,7 +344,12 @@ esp_err_t usb_debug_request_descriptor(void)
 {
     if (debug_cmd_queue == NULL) return ESP_ERR_INVALID_STATE;
     usb_debug_cmd_t cmd = { .type = USB_DEBUG_CMD_DESCRIPTOR };
-    return xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+    if (xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
+        usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor queued");
+        return ESP_OK;
+    }
+    usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 7, NULL, 0, "descriptor queue full");
+    return ESP_ERR_TIMEOUT;
 }
 
 esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length)
@@ -350,7 +362,14 @@ esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint1
         .report_id = report_id,
         .length = length,
     };
-    return xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+    if (xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
+        char note[48];
+        snprintf(note, sizeof(note), "GET_REPORT type=%u queued", report_type);
+        usb_debug_record_add(USB_DEBUG_REC_EVENT, report_id, 0, NULL, 0, note);
+        return ESP_OK;
+    }
+    usb_debug_record_add(USB_DEBUG_REC_ERROR, report_id, 7, NULL, 0, "GET_REPORT queue full");
+    return ESP_ERR_TIMEOUT;
 }
 
 // USB Host client event handler
@@ -530,9 +549,13 @@ static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, ui
         return ESP_ERR_TIMEOUT;
     }
 
-    // Prepare USB transfer for control request
+    // Prepare USB transfer for control request. Allocate on a 64-byte boundary;
+    // several ESP-IDF USB Host paths reject otherwise valid control transfers
+    // with ESP_ERR_INVALID_ARG when the backing buffer is not packet-aligned.
     usb_transfer_t *transfer;
-    esp_err_t err = usb_host_transfer_alloc(buffer_size + 8, 0, &transfer);  // +8 for setup packet
+    const size_t xfer_size = buffer_size + sizeof(usb_setup_packet_t);
+    const size_t alloc_size = (xfer_size + 63) & ~((size_t)63);
+    esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &transfer);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate control transfer: %s", esp_err_to_name(err));
         xSemaphoreGive(transfer_mutex);
@@ -551,7 +574,8 @@ static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, ui
     transfer->bEndpointAddress = 0x00;  // Control endpoint
     transfer->callback = transfer_callback;
     transfer->context = NULL;
-    transfer->num_bytes = buffer_size + 8;
+    memset(transfer->data_buffer, 0, alloc_size);
+    transfer->num_bytes = xfer_size;
     transfer->timeout_ms = 3000;
 
     // Fill setup packet
@@ -810,11 +834,12 @@ static void usb_debug_process_commands(void)
         }
 
         if (cmd.type == USB_DEBUG_CMD_DESCRIPTOR) {
-            usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor requested");
+            usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor processing");
             request_hid_report_descriptor(ups_device, HID_INTERFACE);
         } else if (cmd.type == USB_DEBUG_CMD_GET_REPORT) {
             uint8_t buf[128] = {0};
             size_t len = 0;
+            usb_debug_record_add(USB_DEBUG_REC_EVENT, cmd.report_id, 0, NULL, 0, "GET_REPORT processing");
             esp_err_t err = get_hid_report_typed(cmd.report_type, cmd.report_id, buf, cmd.length, &len);
             if (err == ESP_OK) {
                 usb_debug_record_add(USB_DEBUG_REC_FEATURE, cmd.report_id, 0, buf, len, "manual GET_REPORT");

@@ -36,7 +36,7 @@ Recommended fields for each protocol profile:
 | USB VID:PID | `051D:0003` |
 | Project target | Jim's desk UPS bridge |
 | Descriptor source | ESP32 `/usb-debug` descriptor dump, `usbdump.txt` |
-| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison by default; v0.3.22+ can optionally include the raw setup packet for deep USB debugging. v0.3.23+ requests 1024 bytes because the SMT2200 descriptor continues past 512 bytes. |
+| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison by default; v0.3.22+ can optionally include the raw setup packet for deep USB debugging. v0.3.23+ requests 1024 bytes because the SMT2200 descriptor continues past 512 bytes; clean capture confirms the full payload is 515 bytes / raw control transfer is 523 bytes. |
 | HID descriptor start | `05 84 09 04 A1 01 ...` |
 | Family | HID Power Device / Battery System, Smart-UPS variant |
 
@@ -96,7 +96,7 @@ These appear on vendor page `0xFF86` and should be captured for future decoding,
 | `0x8E` | Feature | 2 bytes | Vendor feature report, usage `0xF6` |
 | `0x93` | Feature | 2 bytes | Vendor feature report, usage `0xF3` |
 | `0x94` | Feature | 2 bytes | Vendor feature report, usage `0xF2` |
-| `0x92` | Feature | likely 2 bytes | Probable vendor feature report, usage `0xF4`; final descriptor tail was truncated in first dump, verify with v0.3.21+ clean dump. |
+| `0x92` | Feature | 2 bytes | Vendor feature report, usage `0xF4`; confirmed complete in v0.3.23 clean dump (`85 92 09 F4 15 00 26 FF 00 75 08 95 02 B1 23`). |
 
 ### Known Bad / Not Universal
 
@@ -124,11 +124,11 @@ Likely flags include:
 
 ### Descriptor Length Discovery
 
-The clean v0.3.22 payload-only dump returned exactly 512 descriptor bytes and ended mid-HID-item (`... 85 92 09 F4 15 00 26 FF 00 75 08 95`). This indicates the SMT2200 report descriptor is longer than 512 bytes. v0.3.23-dev increases the requested descriptor payload to 1024 bytes so the final vendor report definitions can be captured.
+The clean v0.3.22 payload-only dump returned exactly 512 descriptor bytes and ended mid-HID-item (`... 85 92 09 F4 15 00 26 FF 00 75 08 95`). v0.3.23-dev increased the requested descriptor payload to 1024 bytes. The follow-up clean capture completed the descriptor at 515 payload bytes / 523 raw-control bytes. The final tail is `B1 23 C0`, completing vendor Feature report `0x92` and the closing collection.
 
 ### Next Capture Tasks
 
-1. Use v0.3.23+ `/usb-debug` to generate a clean 1024-byte descriptor dump.
+1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.
 2. Confirm descriptor payload length and final tail bytes, especially likely report `0x92`.
 3. Manually GET_REPORT likely IDs and preserve sample payloads:
    - `0x07` status bitfield

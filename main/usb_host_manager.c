@@ -82,7 +82,7 @@ static void usb_debug_record_add(usb_debug_record_type_t type, uint8_t report_id
 
 static usb_debug_config_t debug_cfg = {
     .mode = USB_DEBUG_MODE_OFF,
-    .capture_interrupt_reports = false,
+    .capture_interrupt_reports = true,
     .capture_feature_reports = false,
     .include_control_setup = false,
     .log_to_esp_log = false,

@@ -126,6 +126,21 @@ Likely flags include:
 
 The clean v0.3.22 payload-only dump returned exactly 512 descriptor bytes and ended mid-HID-item (`... 85 92 09 F4 15 00 26 FF 00 75 08 95`). v0.3.23-dev increased the requested descriptor payload to 1024 bytes. The follow-up clean capture completed the descriptor at 515 payload bytes / 523 raw-control bytes. The final tail is `B1 23 C0`, completing vendor Feature report `0x92` and the closing collection.
 
+
+### Confirmed Online GET_REPORT Samples
+
+Captured from Jim's APC Smart-UPS SMT2200 while online / line power present, using `/usb-debug` Active Debug mode and HID Feature GET_REPORT (`report_type=3`). These are sample payloads for building the SMT2200 model profile.
+
+| Report ID | Raw Response | Decoded Raw | Current Interpretation | Confidence |
+|---:|---|---:|---|---|
+| `0x09` | `09 A8 4A` | `0x4AA8` / 19112 | PresentStatus-style bitfield; bits set: 3, 5, 7, 9, 11, 14 while online | Confirmed sample, bit meanings need offline compare |
+| `0x0C` | `0C 64` | 100 | Battery charge / RemainingCapacity = 100% | Confirmed |
+| `0x0D` | `0D B0 13` | 5040 | Battery voltage-like value. Descriptor unit/exponent suggests special scaling; compare against existing bridge reading before final scale. | Confirmed sample, scale pending |
+| `0x0A` | `0A C0 12` | 4800 | Runtime = 4800 seconds = 80 minutes | Confirmed |
+| `0x0B` | `0B 4A 15` | 5450 | Voltage usage report. Possible nominal/config voltage or model-specific value; scale pending. | Confirmed sample, meaning pending |
+| `0x11` | `11 0A` | 10 | Low charge threshold = 10% | Confirmed |
+| `0x14` | `14 02` | 2 | Audible alarm / beeper enum = 2 | Confirmed sample, enum labels pending |
+
 ### Next Capture Tasks
 
 1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.

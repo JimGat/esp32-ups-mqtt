@@ -157,6 +157,17 @@ Captured from Jim's APC Smart-UPS SMT2200 while online / line power present.
 | Feature `0x93`, len 8 | `93 01 00` | 1 | Vendor Feature usage `0xF3`; nonzero online sample. |
 | Feature `0x94`, len 8 | `94 01 00` | 1 | Vendor Feature usage `0xF2`; nonzero online sample. |
 
+
+### Confirmed Input GET_REPORT Samples
+
+Captured from Jim's APC Smart-UPS SMT2200 while online / line power present.
+
+| Request | Result | Decoded Raw | Notes |
+|---|---|---:|---|
+| Input `0x89`, len 64 | `ESP_ERR_NOT_SUPPORTED` | n/a | Although descriptor declares vendor Input `0x89`, this device/stack does not support manual Input GET_REPORT for it. It may only arrive by interrupt/event, or require APC vendor protocol behavior. |
+| Input `0x0D`, len 8 | `0D B0 13` | 5040 | Same as Feature `0x0D`; voltage-like report is accessible as Input and Feature. |
+| Input `0x0B`, len 8 | `0B 4A 15` | 5450 | Same as Feature `0x0B`; voltage usage report is accessible as Input and Feature. |
+
 ### Next Capture Tasks
 
 1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.

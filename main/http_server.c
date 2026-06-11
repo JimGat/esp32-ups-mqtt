@@ -272,7 +272,7 @@ static const char *PAGE_STYLE =
     ".online{color:#4caf50}.offline{color:#f44336}";
 
 static const char *PAGE_NAV =
-    "<div class='nav'><a href='/'>Config</a> | <a href='/status'>Status &amp; Logs</a></div>";
+    "<div class='nav'><a href='/'>Config</a> | <a href='/status'>Status &amp; Logs</a> | <a href='/usb-debug'>USB Debug</a></div>";
 
 /* ═══════════════ GET / — Config Page ═══════════════ */
 
@@ -784,6 +784,151 @@ static esp_err_t save_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+/* ═══════════════ USB Debug UI/API ═══════════════ */
+
+static const char *debug_mode_name(usb_debug_mode_t mode)
+{
+    switch (mode) {
+        case USB_DEBUG_MODE_PASSIVE: return "passive";
+        case USB_DEBUG_MODE_ACTIVE: return "active";
+        case USB_DEBUG_MODE_OFF:
+        default: return "off";
+    }
+}
+
+static esp_err_t recv_small_body(httpd_req_t *req, char *body, size_t body_size)
+{
+    if (!body || body_size == 0) return ESP_ERR_INVALID_ARG;
+    size_t remaining = req->content_len;
+    if (remaining >= body_size) remaining = body_size - 1;
+    size_t off = 0;
+    while (remaining > 0) {
+        int r = httpd_req_recv(req, body + off, remaining);
+        if (r <= 0) return ESP_FAIL;
+        off += r;
+        remaining -= r;
+    }
+    body[off] = '\0';
+    return ESP_OK;
+}
+
+static uint32_t parse_u32_auto(const char *s)
+{
+    return s ? (uint32_t)strtoul(s, NULL, 0) : 0;
+}
+
+static esp_err_t usb_debug_page_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    send_page_header(req, "USB Debug", false);
+    httpd_resp_sendstr_chunk(req,
+        "<div class='card'><h2>USB HID Debugger</h2>"
+        "<p>Keeps Wi-Fi, HTTP, logs, and Web OTA alive. Debug mode pauses normal bridge parsing/polling so raw USB commands do not compete with MQTT telemetry.</p>"
+        "<p><strong>Read-only first pass:</strong> descriptor dump and GET_REPORT. Reboot always returns to normal bridge mode.</p>"
+        "<form method='POST' action='/api/usb-debug/config'>"
+        "<label>Mode</label><select name='mode'><option value='off'>Normal Bridge</option><option value='passive'>Passive Capture</option><option value='active'>Active Debug</option></select>"
+        "<label><input type='checkbox' name='cap_int' value='1' checked> Capture interrupt-IN reports</label>"
+        "<label><input type='checkbox' name='cap_feat' value='1'> Capture normal GET_REPORT polls</label>"
+        "<label><input type='checkbox' name='log' value='1'> Mirror debug records to ESP log</label>"
+        "<button type='submit'>Apply Debug Mode</button></form>"
+        "<form method='POST' action='/api/usb-debug/descriptor'><button type='submit'>Dump HID Report Descriptor</button></form>"
+        "<form method='POST' action='/api/usb-debug/request'>"
+        "<label>Report Type (1=input, 2=output, 3=feature)</label><input name='type' value='3'>"
+        "<label>Report ID (hex OK, e.g. 0x0D)</label><input name='id' value='0x0D'>"
+        "<label>Length</label><input name='len' value='64'>"
+        "<button type='submit'>GET_REPORT</button></form>"
+        "<form method='POST' action='/api/usb-debug/clear'><button type='submit'>Clear Debug Capture</button></form>"
+        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a></p>"
+        "<pre id='dbg'>Loading...</pre>"
+        "<script>async function poll(){try{let s=await fetch('/api/usb-debug');let r=await fetch('/api/usb-debug/records');document.getElementById('dbg').textContent=await s.text()+'\\n\\n'+await r.text();}catch(e){document.getElementById('dbg').textContent=e;}setTimeout(poll,2000);}poll();</script>"
+        "</div>");
+    httpd_resp_sendstr_chunk(req, "</body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t usb_debug_state_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    usb_debug_state_t st; usb_debug_config_t cfg;
+    usb_debug_get_state(&st); usb_debug_get_config(&cfg);
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"mode\":\"%s\",\"ups_connected\":%s,\"capture_interrupt\":%s,\"capture_feature\":%s,\"log_to_esp_log\":%s,\"interrupt_reports_seen\":%lu,\"feature_reports_seen\":%lu,\"descriptor_dumps\":%lu,\"errors\":%lu,\"dropped_records\":%lu,\"last_activity_ms\":%lld}",
+        debug_mode_name(cfg.mode), st.ups_connected ? "true" : "false", cfg.capture_interrupt_reports ? "true" : "false", cfg.capture_feature_reports ? "true" : "false", cfg.log_to_esp_log ? "true" : "false", (unsigned long)st.interrupt_reports_seen, (unsigned long)st.feature_reports_seen, (unsigned long)st.descriptor_dumps, (unsigned long)st.errors, (unsigned long)st.dropped_records, (long long)st.last_activity_ms);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    return httpd_resp_sendstr(req, buf);
+}
+
+static esp_err_t usb_debug_records_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    usb_debug_record_t recs[32];
+    size_t n = usb_debug_get_records(recs, 32, 0);
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    char line[512];
+    for (size_t i = 0; i < n; i++) {
+        char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1]; int pos = 0;
+        size_t data_len = recs[i].length > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : recs[i].length;
+        for (size_t b = 0; b < data_len && pos < (int)sizeof(hex) - 4; b++) pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", recs[i].data[b]);
+        snprintf(line, sizeof(line), "%lu %lldms type=%d report=0x%02X status=%u len=%u note=%s data=%s\n", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms, recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, recs[i].note, hex);
+        httpd_resp_sendstr_chunk(req, line);
+    }
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t usb_debug_config_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    char body[256];
+    if (recv_small_body(req, body, sizeof(body)) != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+    char mode[24] = "off"; get_form_value(body, "mode", mode, sizeof(mode));
+    usb_debug_config_t cfg = {0};
+    if (strcmp(mode, "passive") == 0) cfg.mode = USB_DEBUG_MODE_PASSIVE;
+    else if (strcmp(mode, "active") == 0) cfg.mode = USB_DEBUG_MODE_ACTIVE;
+    else cfg.mode = USB_DEBUG_MODE_OFF;
+    cfg.capture_interrupt_reports = strstr(body, "cap_int=") != NULL;
+    cfg.capture_feature_reports = strstr(body, "cap_feat=") != NULL;
+    cfg.log_to_esp_log = strstr(body, "log=") != NULL;
+    esp_err_t err = usb_debug_set_config(&cfg);
+    if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
+    httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+}
+
+static esp_err_t usb_debug_descriptor_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    esp_err_t err = usb_debug_request_descriptor();
+    if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
+    httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+}
+
+static esp_err_t usb_debug_request_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    char body[256], val[32];
+    if (recv_small_body(req, body, sizeof(body)) != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+    uint8_t type = 3, id = 0; uint16_t len = 64;
+    if (get_form_value(body, "type", val, sizeof(val))) type = (uint8_t)parse_u32_auto(val);
+    if (get_form_value(body, "id", val, sizeof(val))) id = (uint8_t)parse_u32_auto(val);
+    if (get_form_value(body, "len", val, sizeof(val))) len = (uint16_t)parse_u32_auto(val);
+    esp_err_t err = usb_debug_request_report(type, id, len);
+    if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
+    httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+}
+
+static esp_err_t usb_debug_clear_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    usb_debug_clear_records();
+    httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+}
+
 /* ═══════════════ Server Start ═══════════════ */
 
 static httpd_handle_t server = NULL;
@@ -801,7 +946,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 12;
+    httpd_config.max_uri_handlers = 20;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -815,6 +960,13 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t metrics_uri = { .uri = "/metrics",  .method = HTTP_GET,  .handler = metrics_handler };
     const httpd_uri_t version_uri = { .uri = "/version",  .method = HTTP_GET,  .handler = version_handler };
     const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
+    const httpd_uri_t usb_debug_page_uri = { .uri = "/usb-debug", .method = HTTP_GET, .handler = usb_debug_page_handler };
+    const httpd_uri_t usb_debug_state_uri = { .uri = "/api/usb-debug", .method = HTTP_GET, .handler = usb_debug_state_handler };
+    const httpd_uri_t usb_debug_records_uri = { .uri = "/api/usb-debug/records", .method = HTTP_GET, .handler = usb_debug_records_handler };
+    const httpd_uri_t usb_debug_config_uri = { .uri = "/api/usb-debug/config", .method = HTTP_POST, .handler = usb_debug_config_handler };
+    const httpd_uri_t usb_debug_descriptor_uri = { .uri = "/api/usb-debug/descriptor", .method = HTTP_POST, .handler = usb_debug_descriptor_handler };
+    const httpd_uri_t usb_debug_request_uri = { .uri = "/api/usb-debug/request", .method = HTTP_POST, .handler = usb_debug_request_handler };
+    const httpd_uri_t usb_debug_clear_uri = { .uri = "/api/usb-debug/clear", .method = HTTP_POST, .handler = usb_debug_clear_handler };
 
     httpd_register_uri_handler(server, &root_uri);
     httpd_register_uri_handler(server, &status_uri);
@@ -822,6 +974,13 @@ esp_err_t http_server_start(app_config_t *config)
     httpd_register_uri_handler(server, &metrics_uri);
     httpd_register_uri_handler(server, &version_uri);
     httpd_register_uri_handler(server, &save_uri);
+    httpd_register_uri_handler(server, &usb_debug_page_uri);
+    httpd_register_uri_handler(server, &usb_debug_state_uri);
+    httpd_register_uri_handler(server, &usb_debug_records_uri);
+    httpd_register_uri_handler(server, &usb_debug_config_uri);
+    httpd_register_uri_handler(server, &usb_debug_descriptor_uri);
+    httpd_register_uri_handler(server, &usb_debug_request_uri);
+    httpd_register_uri_handler(server, &usb_debug_clear_uri);
 
     /* OTA & system management endpoints */
     register_ota_handlers(server);

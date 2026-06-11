@@ -65,6 +65,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "usb/usb_host.h"
@@ -72,6 +73,11 @@
 #include <string.h>
 
 static const char *TAG = "usb_host";
+
+// Forward declarations used by the runtime USB debug command queue.
+static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, uint8_t *buffer, size_t buffer_size, size_t *actual_length);
+static void usb_debug_record_add(usb_debug_record_type_t type, uint8_t report_id, uint8_t status,
+                                 const uint8_t *data, size_t len, const char *note);
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
@@ -89,8 +95,16 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             }
             ESP_LOGI(TAG, "%04x: %s", i, line);
         }
+        for (int i = 0; i < transfer->actual_num_bytes; i += USB_DEBUG_MAX_RECORD_DATA) {
+            char note[48];
+            int chunk = transfer->actual_num_bytes - i;
+            if (chunk > USB_DEBUG_MAX_RECORD_DATA) chunk = USB_DEBUG_MAX_RECORD_DATA;
+            snprintf(note, sizeof(note), "descriptor offset %d", i);
+            usb_debug_record_add(USB_DEBUG_REC_DESCRIPTOR, 0, 0, transfer->data_buffer + i, chunk, note);
+        }
     } else {
         ESP_LOGE(TAG, "Failed to get HID Report Descriptor: %d", transfer->status);
+        usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, transfer->status, NULL, 0, "descriptor failed");
     }
     usb_host_transfer_free(transfer);
 }
@@ -122,6 +136,7 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
     err = usb_host_transfer_submit(ctrl_xfer);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to submit ctrl xfer: %s", esp_err_to_name(err));
+        usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, err, NULL, 0, "descriptor submit failed");
         usb_host_transfer_free(ctrl_xfer);
     } else {
         ESP_LOGI(TAG, "🔍 Requesting HID Report Descriptor from UPS...");
@@ -146,10 +161,41 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 //══════════════════════════════════════════════════════════════════════════════
 // These variables track the current state of the USB connection
 static bool ups_connected = false;           // Is UPS physically connected?
-static bool hid_report_desc_requested = false; // Flag to request HID Report Descriptor from main task
 static SemaphoreHandle_t usb_mutex = NULL;   // Mutex for USB library access
 static usb_host_client_handle_t usb_client = NULL;  // Our USB client handle
 static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
+
+// Runtime USB debug mode. This is intentionally NOT persisted to NVS:
+// every reboot returns the bridge to normal MQTT mode so field debug cannot
+// accidentally strand the device in a noisy diagnostic state.
+#define USB_DEBUG_RING_SIZE 64
+#define USB_DEBUG_CMD_QUEUE_LEN 4
+
+typedef enum {
+    USB_DEBUG_CMD_DESCRIPTOR = 1,
+    USB_DEBUG_CMD_GET_REPORT = 2,
+} usb_debug_cmd_type_t;
+
+typedef struct {
+    usb_debug_cmd_type_t type;
+    uint8_t report_type;   // HID: 1=input, 2=output, 3=feature
+    uint8_t report_id;
+    uint16_t length;
+} usb_debug_cmd_t;
+
+static usb_debug_config_t debug_cfg = {
+    .mode = USB_DEBUG_MODE_OFF,
+    .capture_interrupt_reports = false,
+    .capture_feature_reports = false,
+    .log_to_esp_log = false,
+};
+static usb_debug_state_t debug_state = {0};
+static SemaphoreHandle_t debug_mutex = NULL;
+static QueueHandle_t debug_cmd_queue = NULL;
+static usb_debug_record_t debug_ring[USB_DEBUG_RING_SIZE];
+static uint32_t debug_next_seq = 1;
+static size_t debug_head = 0;
+static size_t debug_count = 0;
 
 //══════════════════════════════════════════════════════════════════════════════
 // HID (Human Interface Device) CONFIGURATION
@@ -160,6 +206,152 @@ static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 // HID Interrupt Endpoint: 0x81 means IN endpoint 1 (device-to-host)
 // This is where the UPS automatically sends status updates
 #define HID_INTERRUPT_IN_EP 0x81
+
+static const char *usb_debug_mode_name(usb_debug_mode_t mode)
+{
+    switch (mode) {
+        case USB_DEBUG_MODE_PASSIVE: return "passive";
+        case USB_DEBUG_MODE_ACTIVE: return "active";
+        case USB_DEBUG_MODE_OFF:
+        default: return "off";
+    }
+}
+
+static void usb_debug_record_add(usb_debug_record_type_t type, uint8_t report_id, uint8_t status,
+                                 const uint8_t *data, size_t len, const char *note)
+{
+    if (debug_mutex == NULL) return;
+    if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
+
+    usb_debug_record_t *rec = &debug_ring[debug_head];
+    memset(rec, 0, sizeof(*rec));
+    rec->seq = debug_next_seq++;
+    rec->timestamp_ms = esp_timer_get_time() / 1000;
+    rec->type = type;
+    rec->report_id = report_id;
+    rec->status = status;
+    rec->length = len;
+    if (data && len > 0) {
+        size_t copy_len = len > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : len;
+        memcpy(rec->data, data, copy_len);
+    }
+    if (note) strlcpy(rec->note, note, sizeof(rec->note));
+
+    debug_head = (debug_head + 1) % USB_DEBUG_RING_SIZE;
+    if (debug_count < USB_DEBUG_RING_SIZE) {
+        debug_count++;
+    } else {
+        debug_state.dropped_records++;
+    }
+    debug_state.last_activity_ms = rec->timestamp_ms;
+    if (type == USB_DEBUG_REC_INTERRUPT) debug_state.interrupt_reports_seen++;
+    if (type == USB_DEBUG_REC_FEATURE) debug_state.feature_reports_seen++;
+    if (type == USB_DEBUG_REC_DESCRIPTOR) debug_state.descriptor_dumps++;
+    if (type == USB_DEBUG_REC_ERROR) debug_state.errors++;
+
+    bool log_to_esp = debug_cfg.log_to_esp_log;
+    xSemaphoreGive(debug_mutex);
+
+    if (log_to_esp) {
+        ESP_LOGI(TAG, "USBDBG seq=%lu type=%d rid=0x%02X status=%u len=%u note=%s",
+                 (unsigned long)rec->seq, type, report_id, status, (unsigned)len, note ? note : "");
+    }
+}
+
+esp_err_t usb_debug_set_config(const usb_debug_config_t *cfg)
+{
+    if (!cfg || debug_mutex == NULL) return ESP_ERR_INVALID_ARG;
+    if (cfg->mode > USB_DEBUG_MODE_ACTIVE) return ESP_ERR_INVALID_ARG;
+
+    if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    debug_cfg = *cfg;
+    if (debug_cfg.mode == USB_DEBUG_MODE_OFF) {
+        debug_cfg.capture_interrupt_reports = false;
+        debug_cfg.capture_feature_reports = false;
+    }
+    debug_state.mode = debug_cfg.mode;
+    xSemaphoreGive(debug_mutex);
+
+    char note[48];
+    snprintf(note, sizeof(note), "mode=%s", usb_debug_mode_name(cfg->mode));
+    usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, note);
+    ESP_LOGI(TAG, "🔬 USB debug mode changed: %s", usb_debug_mode_name(cfg->mode));
+    return ESP_OK;
+}
+
+void usb_debug_get_config(usb_debug_config_t *cfg)
+{
+    if (!cfg) return;
+    if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        *cfg = debug_cfg;
+        xSemaphoreGive(debug_mutex);
+    } else {
+        *cfg = debug_cfg;
+    }
+}
+
+void usb_debug_get_state(usb_debug_state_t *state)
+{
+    if (!state) return;
+    if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        debug_state.ups_connected = ups_connected;
+        debug_state.mode = debug_cfg.mode;
+        *state = debug_state;
+        xSemaphoreGive(debug_mutex);
+    } else {
+        *state = debug_state;
+        state->ups_connected = ups_connected;
+    }
+}
+
+size_t usb_debug_get_records(usb_debug_record_t *out, size_t max_records, uint32_t since_seq)
+{
+    if (!out || max_records == 0 || debug_mutex == NULL) return 0;
+    if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return 0;
+
+    size_t copied = 0;
+    size_t start = (debug_head + USB_DEBUG_RING_SIZE - debug_count) % USB_DEBUG_RING_SIZE;
+    for (size_t i = 0; i < debug_count && copied < max_records; i++) {
+        size_t idx = (start + i) % USB_DEBUG_RING_SIZE;
+        if (debug_ring[idx].seq > since_seq) {
+            out[copied++] = debug_ring[idx];
+        }
+    }
+    xSemaphoreGive(debug_mutex);
+    return copied;
+}
+
+void usb_debug_clear_records(void)
+{
+    if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        memset(debug_ring, 0, sizeof(debug_ring));
+        debug_head = 0;
+        debug_count = 0;
+        debug_next_seq = 1;
+        debug_state.dropped_records = 0;
+        xSemaphoreGive(debug_mutex);
+    }
+}
+
+esp_err_t usb_debug_request_descriptor(void)
+{
+    if (debug_cmd_queue == NULL) return ESP_ERR_INVALID_STATE;
+    usb_debug_cmd_t cmd = { .type = USB_DEBUG_CMD_DESCRIPTOR };
+    return xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length)
+{
+    if (debug_cmd_queue == NULL) return ESP_ERR_INVALID_STATE;
+    if (report_type < 1 || report_type > 3 || length == 0 || length > 128) return ESP_ERR_INVALID_ARG;
+    usb_debug_cmd_t cmd = {
+        .type = USB_DEBUG_CMD_GET_REPORT,
+        .report_type = report_type,
+        .report_id = report_id,
+        .length = length,
+    };
+    return xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
 
 // USB Host client event handler
 static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_msg, void *arg)
@@ -203,8 +395,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                     ESP_LOGE(TAG, "Failed to claim interface: %s", esp_err_to_name(err));
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
-                    // Flag to request HID Report Descriptor from the main task (safe context)
-                    hid_report_desc_requested = true;
+                    usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "interface claimed");
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)
@@ -326,7 +517,7 @@ static void transfer_callback(usb_transfer_t *transfer)
 // - Control transfers need BOTH lib and client events
 // - The documentation doesn't clearly explain this difference
 //
-static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffer_size, size_t *actual_length)
+static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, uint8_t *buffer, size_t buffer_size, size_t *actual_length)
 {
     if (ups_device == NULL) {
         return ESP_ERR_INVALID_STATE;
@@ -367,7 +558,7 @@ static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffe
     usb_setup_packet_t *setup = (usb_setup_packet_t *)transfer->data_buffer;
     setup->bmRequestType = 0xA1;  // Device-to-Host, Class, Interface
     setup->bRequest = 0x01;        // GET_REPORT
-    setup->wValue = (3 << 8) | report_id;  // Feature Report (type 3), Report ID
+    setup->wValue = (report_type << 8) | report_id;  // Report type + Report ID
     setup->wIndex = HID_INTERFACE;
     setup->wLength = buffer_size;
 
@@ -395,7 +586,7 @@ static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffe
 
     // Wait for transfer completion
     // CRITICAL: Must process BOTH lib and client events for control transfers
-    const int max_wait_ms = 2000;
+    const int max_wait_ms = 4000;
     const int poll_interval_ms = 10;
     int waited_ms = 0;
     bool transfer_complete = false;
@@ -456,6 +647,11 @@ static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffe
     // Release mutex
     xSemaphoreGive(transfer_mutex);
     return err;
+}
+
+static esp_err_t get_hid_report(uint8_t report_id, uint8_t *buffer, size_t buffer_size, size_t *actual_length)
+{
+    return get_hid_report_typed(3, report_id, buffer, buffer_size, actual_length);
 }
 
 // Read HID report from interrupt endpoint
@@ -596,6 +792,39 @@ static esp_err_t read_hid_report(uint8_t *buffer, size_t buffer_size, size_t *ac
     return err;
 }
 
+static void usb_debug_process_commands(void)
+{
+    if (debug_cmd_queue == NULL) return;
+
+    usb_debug_cmd_t cmd;
+    while (xQueueReceive(debug_cmd_queue, &cmd, 0) == pdTRUE) {
+        usb_debug_config_t cfg;
+        usb_debug_get_config(&cfg);
+        if (cfg.mode != USB_DEBUG_MODE_ACTIVE) {
+            usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 0, NULL, 0, "debug inactive");
+            continue;
+        }
+        if (!ups_connected || ups_device == NULL) {
+            usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 0, NULL, 0, "UPS not connected");
+            continue;
+        }
+
+        if (cmd.type == USB_DEBUG_CMD_DESCRIPTOR) {
+            usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor requested");
+            request_hid_report_descriptor(ups_device, HID_INTERFACE);
+        } else if (cmd.type == USB_DEBUG_CMD_GET_REPORT) {
+            uint8_t buf[128] = {0};
+            size_t len = 0;
+            esp_err_t err = get_hid_report_typed(cmd.report_type, cmd.report_id, buf, cmd.length, &len);
+            if (err == ESP_OK) {
+                usb_debug_record_add(USB_DEBUG_REC_FEATURE, cmd.report_id, 0, buf, len, "manual GET_REPORT");
+            } else {
+                usb_debug_record_add(USB_DEBUG_REC_ERROR, cmd.report_id, err, NULL, 0, esp_err_to_name(err));
+            }
+        }
+    }
+}
+
 esp_err_t usb_host_init(void)
 {
     ESP_LOGI(TAG, "DEBUG: usb_host_init() called");
@@ -614,6 +843,13 @@ esp_err_t usb_host_init(void)
     transfer_mutex = xSemaphoreCreateMutex();
     if (transfer_mutex == NULL) {
         ESP_LOGE(TAG, "❌ Failed to create transfer mutex");
+        return ESP_FAIL;
+    }
+
+    debug_mutex = xSemaphoreCreateMutex();
+    debug_cmd_queue = xQueueCreate(USB_DEBUG_CMD_QUEUE_LEN, sizeof(usb_debug_cmd_t));
+    if (debug_mutex == NULL || debug_cmd_queue == NULL) {
+        ESP_LOGE(TAG, "❌ Failed to create USB debug state/queue");
         return ESP_FAIL;
     }
 
@@ -699,13 +935,9 @@ void usb_host_task(void *arg)
     while (1) {
         loop_count++;
 
-        // 🔍 Evil Hardware Hacker: Check if we need to request the HID Report Descriptor
-        // This must be done from the main task context, NOT the event callback
-        if (ups_connected && !hid_report_desc_requested) {
-            // We set the flag to true immediately to prevent multiple requests
-            hid_report_desc_requested = true; 
-            request_hid_report_descriptor(ups_device, HID_INTERFACE);
-        }
+        // Process any Web UI queued USB-debug commands from the safe USB task context.
+        // HTTP handlers only enqueue; they never call ESP-IDF USB APIs directly.
+        usb_debug_process_commands();
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {
@@ -748,9 +980,19 @@ void usb_host_task(void *arg)
             ESP_LOGI(TAG, "DEBUG: USB client event received (not timeout)");
         }
 
-        // If UPS is connected, try to read HID reports
+        // If UPS is connected, try to read HID reports.
+        // Active debug mode is command-driven: skip normal interrupt reads/polls so
+        // descriptor dumps and manual GET_REPORT requests never compete with bridge traffic.
         if (ups_connected && ups_device != NULL) {
-            // Passive: Read interrupt transfers (UPS sends automatically)
+            usb_debug_config_t entry_cfg;
+            usb_debug_get_config(&entry_cfg);
+            if (entry_cfg.mode == USB_DEBUG_MODE_ACTIVE) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            // Normal mode parses interrupt reports into metrics.
+            // Passive debug mode captures the same raw interrupt stream without mutating metrics.
             err = read_hid_report(report_buffer, sizeof(report_buffer), &report_len);
 
             if (err == ESP_OK && report_len > 0) {
@@ -759,8 +1001,23 @@ void usb_host_task(void *arg)
 
                 ESP_LOGD(TAG, "📥 HID Report ID: 0x%02X, Length: %d", report_id, report_len);
 
-                // Parse the report
-                apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
+                usb_debug_config_t cfg;
+                usb_debug_get_config(&cfg);
+                if (cfg.mode != USB_DEBUG_MODE_OFF && cfg.capture_interrupt_reports) {
+                    usb_debug_record_add(USB_DEBUG_REC_INTERRUPT, report_id, 0, report_buffer, report_len, "interrupt IN");
+                }
+
+                // In USB debug mode we capture raw traffic but do not mutate production metrics.
+                if (cfg.mode == USB_DEBUG_MODE_OFF) {
+                    apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
+                }
+            }
+
+            usb_debug_config_t loop_cfg;
+            usb_debug_get_config(&loop_cfg);
+            if (loop_cfg.mode != USB_DEBUG_MODE_OFF) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
             }
 
             // Time-based feature report polling (loop_count is unreliable because
@@ -789,6 +1046,11 @@ void usb_host_task(void *arg)
                             pos += snprintf(hex_buf + pos, sizeof(hex_buf) - pos, "%02X ", report_buffer[b]);
                         }
                         ESP_LOGI(TAG, "   Raw: %s", hex_buf);
+                        usb_debug_config_t cfg;
+                        usb_debug_get_config(&cfg);
+                        if (cfg.capture_feature_reports) {
+                            usb_debug_record_add(USB_DEBUG_REC_FEATURE, report_id, 0, report_buffer, report_len, "poll GET_REPORT");
+                        }
                         // Parse the polled report
                         apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
                     } else if (err != ESP_OK) {

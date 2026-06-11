@@ -4,7 +4,7 @@
 
 This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc) by Albin Amat, with attribution preserved but without carrying upstream local configuration history into this repo.
 
-## Current Status: v0.3.18-dev
+## Current Status: v0.3.19-dev
 - **Target Hardware**: ESP32-S3 (USB OTG on GPIO19=D-, GPIO20=D+)
 - **UPS Support**: APC Back-UPS (fully working) and Smart-UPS SMT2200 (VID:PID 051D:0003).
 - **MQTT Path**: `homeassistant/sensor/ups_bridge` / `ups_bridge/<device_id>/events/power`
@@ -13,6 +13,7 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
   - SNTP time sync initialized post-WiFi connection.
   - Cache-busted `/system` endpoint for accurate uptime display.
   - 2000ms USB timeouts to prevent SMT2200 "late callback" memory leaks.
+- **USB Debug Mode**: Web UI-controlled, runtime-only HID debugger for descriptor dumps and manual GET_REPORT probing.
 - **Pending**: Dynamic HID Report Descriptor parsing for SMT2200 Input Voltage & Load. (See *Protocol Extraction* below).
 
 ## JimGat Fork Changes
@@ -66,6 +67,26 @@ Example event payload:
   "load_percent": 23.00
 }
 ```
+
+
+## USB Debug Mode
+
+Open `http://<device-ip>/usb-debug` after logging in. This page turns the bridge into a small, read-only USB HID lab without disabling Wi-Fi, HTTP, logs, or Web OTA.
+
+Modes:
+- **Normal Bridge**: default after every boot. MQTT telemetry and power-event monitoring run normally.
+- **Passive Capture**: captures raw interrupt-IN reports for inspection without mutating production metrics.
+- **Active Debug**: pauses normal bridge USB reads/polls and processes queued debug commands from the Web UI.
+
+Supported first-pass commands:
+- HID Report Descriptor dump (`GET_DESCRIPTOR`, type `0x22`)
+- Manual HID `GET_REPORT` with selectable report type, Report ID, and response length
+- Debug record capture view with hex output
+
+Safety rules:
+- Debug mode is runtime-only and is not stored in NVS. Reboot always returns to Normal Bridge.
+- This first implementation is read-only. It does not expose `SET_REPORT` or UPS control commands.
+- HTTP handlers only enqueue debug commands; the USB host task owns all USB transfers so ESP-IDF USB context rules are preserved.
 
 ## Browser Web Flasher
 > **Flash from your browser:** [Open the JimGat Lab UPS MQTT Bridge Web Flasher](https://jimgat.github.io/esp32-ups-mqtt/)

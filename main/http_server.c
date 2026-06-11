@@ -842,17 +842,53 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     httpd_resp_set_type(req, "text/html; charset=utf-8");
+    usb_debug_config_t cfg;
+    usb_debug_get_config(&cfg);
+    char buf[512];
+
     send_page_header(req, "USB Debug", false);
     httpd_resp_sendstr_chunk(req,
         "<div class='card'><h2>USB HID Debugger</h2>"
-        "<p>Keeps Wi-Fi, HTTP, logs, and Web OTA alive. Debug mode pauses normal bridge parsing/polling so raw USB commands do not compete with MQTT telemetry.</p>"
-        "<p><strong>Read-only first pass:</strong> descriptor dump and GET_REPORT. Reboot always returns to normal bridge mode.</p>"
+        "<p>Keeps Wi-Fi, HTTP, logs, and Web OTA alive. Active Debug pauses normal bridge parsing/polling so raw USB commands do not compete with MQTT telemetry.</p>"
+        "<p><strong>Runtime only:</strong> debug mode is not saved to NVS. Reboot always returns to Normal Bridge mode.</p>"
         "<form method='POST' action='/api/usb-debug/config'>"
-        "<label>Mode</label><select name='mode'><option value='off'>Normal Bridge</option><option value='passive'>Passive Capture</option><option value='active'>Active Debug</option></select>"
-        "<label><input type='checkbox' name='cap_int' value='1' checked> Capture interrupt-IN reports</label>"
-        "<label><input type='checkbox' name='cap_feat' value='1'> Capture normal GET_REPORT polls</label>"
-        "<label><input type='checkbox' name='raw_setup' value='1'> Include raw 8-byte USB control SETUP packet in descriptor dumps</label>"
-        "<label><input type='checkbox' name='log' value='1'> Mirror debug records to ESP log</label>"
+        "<label>Mode</label><select name='mode'>");
+
+    snprintf(buf, sizeof(buf),
+        "<option value='off' %s>Normal Bridge</option>"
+        "<option value='passive' %s>Passive Capture</option>"
+        "<option value='active' %s>Active Debug</option>",
+        cfg.mode == USB_DEBUG_MODE_OFF ? "selected" : "",
+        cfg.mode == USB_DEBUG_MODE_PASSIVE ? "selected" : "",
+        cfg.mode == USB_DEBUG_MODE_ACTIVE ? "selected" : "");
+    httpd_resp_sendstr_chunk(req, buf);
+
+    httpd_resp_sendstr_chunk(req,
+        "</select>"
+        "<div style='display:grid;grid-template-columns:1.5rem 1fr;gap:.45rem .75rem;align-items:start;margin:.75rem 0;'>");
+
+    snprintf(buf, sizeof(buf),
+        "<input id='cap_int' type='checkbox' name='cap_int' value='1' %s><label for='cap_int'>Capture interrupt-IN reports</label>",
+        cfg.capture_interrupt_reports ? "checked" : "");
+    httpd_resp_sendstr_chunk(req, buf);
+
+    snprintf(buf, sizeof(buf),
+        "<input id='cap_feat' type='checkbox' name='cap_feat' value='1' %s><label for='cap_feat'>Capture normal GET_REPORT polls</label>",
+        cfg.capture_feature_reports ? "checked" : "");
+    httpd_resp_sendstr_chunk(req, buf);
+
+    snprintf(buf, sizeof(buf),
+        "<input id='raw_setup' type='checkbox' name='raw_setup' value='1' %s><label for='raw_setup'>Include raw 8-byte USB control SETUP packet in descriptor dumps</label>",
+        cfg.include_control_setup ? "checked" : "");
+    httpd_resp_sendstr_chunk(req, buf);
+
+    snprintf(buf, sizeof(buf),
+        "<input id='log' type='checkbox' name='log' value='1' %s><label for='log'>Mirror debug records to ESP log</label>",
+        cfg.log_to_esp_log ? "checked" : "");
+    httpd_resp_sendstr_chunk(req, buf);
+
+    httpd_resp_sendstr_chunk(req,
+        "</div>"
         "<button type='submit'>Apply Debug Mode</button></form>"
         "<form method='POST' action='/api/usb-debug/descriptor'><button type='submit'>Dump HID Report Descriptor</button></form>"
         "<form method='POST' action='/api/usb-debug/request'>"

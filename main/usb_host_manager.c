@@ -70,15 +70,6 @@
 #include "usb/usb_host.h"
 #include <string.h>
 
-// Local definition of USB setup packet to avoid missing header issues
-typedef struct __attribute__((packed)) {
-    uint8_t bmRequestType;
-    uint8_t bRequest;
-    uint16_t wValue;
-    uint16_t wIndex;
-    uint16_t wLength;
-} usb_setup_packet_local_t;
-
 static const char *TAG = "usb_host";
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
@@ -105,27 +96,33 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
     usb_transfer_t *ctrl_xfer = NULL;
-    esp_err_t err = usb_host_transfer_alloc(520, 0, &ctrl_xfer); // 512 data + 8 setup
+    // Allocate buffer: 8 bytes setup + 512 bytes descriptor. 
+    // Round up to multiple of 64 (max packet size) to satisfy strict ESP-IDF USB host checks.
+    size_t alloc_size = (8 + 512 + 63) & ~63; // 576 bytes
+    
+    esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &ctrl_xfer);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to alloc ctrl xfer: %s", esp_err_to_name(err));
         return;
     }
 
     ctrl_xfer->device_handle = dev_hdl;
-    ctrl_xfer->bEndpointAddress = 0;
+    ctrl_xfer->bEndpointAddress = 0; // Control endpoint is always 0
     ctrl_xfer->callback = hid_report_desc_cb;
     ctrl_xfer->context = NULL;
-    ctrl_xfer->timeout_ms = 1000;
+    ctrl_xfer->timeout_ms = 2000;
+    ctrl_xfer->num_bytes = alloc_size;
 
-    // Setup packet is placed at the start of data_buffer for control transfers
-    usb_setup_packet_local_t *setup = (usb_setup_packet_local_t *)ctrl_xfer->data_buffer;
-    setup->bmRequestType = 0x81;       // IN, Standard, Interface
-    setup->bRequest = 0x06;            // GET_DESCRIPTOR
-    setup->wValue = 0x2200;            // Descriptor Type 0x22 (HID Report), Index 0 (Little Endian)
-    setup->wIndex = intf_num;          // Interface number
-    setup->wLength = 512;              // Max descriptor size to read (Little Endian)
-
-    ctrl_xfer->num_bytes = sizeof(usb_setup_packet_local_t) + 512;
+    // Construct setup packet manually to ensure exact little-endian byte layout
+    uint8_t *setup = ctrl_xfer->data_buffer;
+    setup[0] = 0x81; // bmRequestType: IN (0x80) | Standard (0x00) | Interface (0x01)
+    setup[1] = 0x06; // bRequest: GET_DESCRIPTOR
+    setup[2] = 0x00; // wValue LSB: Descriptor Index (0)
+    setup[3] = 0x22; // wValue MSB: Descriptor Type (0x22 = HID Report)
+    setup[4] = intf_num; // wIndex LSB: Interface number
+    setup[5] = 0x00; // wIndex MSB: 0
+    setup[6] = 0x00; // wLength LSB: 512 (0x0200)
+    setup[7] = 0x02; // wLength MSB: 512
 
     err = usb_host_transfer_submit(ctrl_xfer);
     if (err != ESP_OK) {

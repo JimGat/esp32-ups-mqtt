@@ -114,6 +114,7 @@ esp_err_t config_load(app_config_t *config)
 {
     memset(config, 0, sizeof(*config));
     config->publish_interval_ms = CONFIG_MQTT_PUBLISH_INTERVAL_MS;
+    config->ups_profile = UPS_PROFILE_AUTO;
     strlcpy(config->provisioning_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->provisioning_pass));
     strlcpy(config->web_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->web_pass));
 
@@ -129,6 +130,8 @@ esp_err_t config_load(app_config_t *config)
         len = sizeof(config->web_pass);   nvs_get_str(nvs, "web_pass",  config->web_pass,  &len);
         len = sizeof(config->device_label); nvs_get_str(nvs, "device_label", config->device_label, &len);
         nvs_get_u32(nvs, "pub_interval", &config->publish_interval_ms);
+        nvs_get_u8(nvs, "ups_profile", &config->ups_profile);
+        config->ups_profile = (uint8_t)ups_profile_validate(config->ups_profile);
         nvs_close(nvs);
         if (config->provisioning_pass[0] == '\0') {
             const char *fallback_pass = config->web_pass[0] ? config->web_pass : DEFAULT_PROVISIONING_PASSWORD;
@@ -167,6 +170,7 @@ static esp_err_t config_save(const app_config_t *config)
     nvs_set_str(nvs, "web_pass",  config->web_pass);
     nvs_set_str(nvs, "device_label", config->device_label);
     nvs_set_u32(nvs, "pub_interval", config->publish_interval_ms);
+    nvs_set_u8(nvs, "ups_profile", ups_profile_validate(config->ups_profile));
 
     err = nvs_commit(nvs);
     nvs_close(nvs);
@@ -300,7 +304,7 @@ static void send_page_header(httpd_req_t *req, const char *title, bool auto_refr
 static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    char buf[512];
+    char buf[1024];
 
     if (!check_basic_auth(req)) return ESP_OK;
 
@@ -349,8 +353,18 @@ static esp_err_t root_handler(httpd_req_t *req)
     snprintf(buf, sizeof(buf),
         "<div class='card'><h2>Device Identification</h2>"
         "<label>Device Label (e.g., 'UPS Server Room')</label><input name='device_label' value='%s'>"
+        "<label>UPS Make / Model Profile</label>"
+        "<select name='ups_profile'>"
+        "<option value='0' %s>Auto Detect (best effort)</option>"
+        "<option value='1' %s>APC Smart-UPS SMT2200</option>"
+        "<option value='2' %s>Generic APC HID</option>"
+        "</select>"
+        "<p class='muted'>Profiles control report polling and decoding. Auto selects SMT2200 for APC VID:PID 051D:0003; otherwise generic APC HID.</p>"
         "</div>",
-        label_esc);
+        label_esc,
+        current_config->ups_profile == UPS_PROFILE_AUTO ? "selected" : "",
+        current_config->ups_profile == UPS_PROFILE_APC_SMT2200 ? "selected" : "",
+        current_config->ups_profile == UPS_PROFILE_APC_GENERIC_HID ? "selected" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
     /* Interval */
@@ -749,6 +763,12 @@ static esp_err_t save_handler(httpd_req_t *req)
     }
     if (get_form_value(body, "device_label", val, sizeof(val)))
         strlcpy(new_config.device_label, val, sizeof(new_config.device_label));
+    if (get_form_value(body, "ups_profile", val, sizeof(val))) {
+        int profile = atoi(val);
+        if (profile >= UPS_PROFILE_AUTO && profile <= UPS_PROFILE_APC_GENERIC_HID) {
+            new_config.ups_profile = (uint8_t)profile;
+        }
+    }
     if (get_form_value(body, "interval", val, sizeof(val))) {
         int secs = atoi(val);
         if (secs >= 5 && secs <= 300)

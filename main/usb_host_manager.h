@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "ups_profile.h"
 
+void usb_host_set_configured_profile(ups_profile_t profile);
+ups_profile_t usb_host_get_active_profile(void);
 esp_err_t usb_host_init(void);
 void usb_host_task(void *arg);
 bool usb_ups_is_connected(void);

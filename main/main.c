@@ -332,13 +332,14 @@ void app_main(void)
 
     // Load config from NVS. WiFi and MQTT credentials are provisioned at runtime.
     config_load(&app_config);
-    ESP_LOGI(TAG, "📋 Config: WiFi=%s, MQTT=%s, Interval=%lums",
+    ESP_LOGI(TAG, "📋 Config: WiFi=%s, MQTT=%s, Interval=%lums, UPS Profile=%s",
              app_config.wifi_ssid[0] ? app_config.wifi_ssid : "<not provisioned>",
              app_config.mqtt_url[0] ? app_config.mqtt_url : "<not provisioned>",
-             (unsigned long)app_config.publish_interval_ms);
+             (unsigned long)app_config.publish_interval_ms,
+             ups_profile_name(ups_profile_validate(app_config.ups_profile)));
 
     // Initialize HID parser before starting the web UI so /status can render safely.
-    apc_hid_parser_init();
+    apc_hid_parser_init(ups_profile_validate(app_config.ups_profile));
 
     if (!config_is_complete(&app_config)) {
         ESP_LOGW(TAG, "⚙️ Device is not provisioned. Starting WiFi setup access point.");
@@ -377,12 +378,14 @@ void app_main(void)
 
     // Initialize MQTT
     ESP_LOGI(TAG, "📡 Initializing MQTT...");
+    mqtt_set_device_model(ups_profile_name(ups_profile_validate(app_config.ups_profile)));
     ESP_ERROR_CHECK(mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass, app_config.device_label));
     ESP_LOGI(TAG, "DEBUG: MQTT init complete");
 
     // Initialize USB Host
     ESP_LOGI(TAG, "DEBUG: About to init USB Host");
     ESP_LOGI(TAG, "🔌 Initializing USB Host on GPIO19/20...");
+    usb_host_set_configured_profile(ups_profile_validate(app_config.ups_profile));
     esp_err_t usb_err = usb_host_init();
     ESP_LOGI(TAG, "DEBUG: usb_host_init returned: 0x%x (%s)", usb_err, esp_err_to_name(usb_err));
 

@@ -4,7 +4,7 @@
 
 This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports. It publishes UPS status and metrics to MQTT for power-outage alerting, outage/recovery tracking, brownout monitoring, and low-voltage trend collection. It began as a clean public import and extension of [`hms-homelab/hms-esp-apc`](https://github.com/hms-homelab/hms-esp-apc) by Albin Amat, with attribution preserved but without carrying upstream local configuration history into this repo.
 
-## Current Status: v0.3.23-dev
+## Current Status: v0.3.24-dev
 - **Target Hardware**: ESP32-S3 (USB OTG on GPIO19=D-, GPIO20=D+)
 - **UPS Support**: APC Back-UPS (fully working) and Smart-UPS SMT2200 (VID:PID 051D:0003).
 - **MQTT Path**: `homeassistant/sensor/ups_bridge` / `ups_bridge/<device_id>/events/power`
@@ -18,6 +18,7 @@ This firmware targets ESP32-S3 USB OTG boards connected to APC UPS USB HID ports
 - **Protocol Notes**: APC SMT2200 HID findings are documented in `docs/protocols/ups-usb-hid-protocol-notes.md` as the seed for manufacturer/model tables.
 - **Raw Control View**: `/usb-debug` can optionally include the 8-byte USB control SETUP packet for deep descriptor-transfer debugging.
 - **Long Descriptor Capture**: USB debug descriptor requests now ask for 1024 bytes because the SMT2200 descriptor extends past 512 bytes.
+- **UPS Profiles**: Config UI now supports Auto Detect, APC Smart-UPS SMT2200, and Generic APC HID profiles. Profiles control HID poll lists and parser mappings.
 - **Pending**: Dynamic HID Report Descriptor parsing for SMT2200 Input Voltage & Load. (See *Protocol Extraction* below).
 
 ## JimGat Fork Changes
@@ -72,6 +73,16 @@ Example event payload:
 }
 ```
 
+
+## UPS Profile Selection
+
+The config page includes a UPS Make / Model Profile selector:
+
+- `Auto Detect (best effort)` — default for existing devices. Currently selects the SMT2200 parser/poll profile when APC VID:PID `051D:0003` is detected; otherwise falls back to Generic APC HID.
+- `APC Smart-UPS SMT2200` — uses the confirmed SMT2200 report list: `0x09`, `0x0C`, `0x0A`, `0x0D`, `0x0B`, `0x11`, `0x14`.
+- `Generic APC HID` — preserves the earlier generic APC HID polling behavior.
+
+Profile changes are stored in NVS and applied after saving settings and restarting the device.
 
 ## USB Debug Mode
 

@@ -5,6 +5,7 @@
 #include "esp_err.h"
 #include "apc_hid_parser.h"
 
+void mqtt_set_device_model(const char *model);
 esp_err_t mqtt_init(const char *broker_url, const char *username, const char *password, const char *device_label);
 esp_err_t mqtt_publish_metric(const char *sensor_name, float value, const char *unit);
 esp_err_t mqtt_publish_string(const char *sensor_name, const char *value);

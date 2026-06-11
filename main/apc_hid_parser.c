@@ -31,9 +31,18 @@
 
 static const char *TAG = "apc_hid_parser";
 static ups_metrics_t current_metrics = {0};
+static ups_profile_t configured_profile = UPS_PROFILE_AUTO;
+static ups_profile_t active_profile = UPS_PROFILE_APC_GENERIC_HID;
 
-void apc_hid_parser_init(void)
+static bool is_smt2200_profile(void)
 {
+    return active_profile == UPS_PROFILE_APC_SMT2200;
+}
+
+void apc_hid_parser_init(ups_profile_t profile)
+{
+    configured_profile = ups_profile_validate((uint8_t)profile);
+    active_profile = (configured_profile == UPS_PROFILE_AUTO) ? UPS_PROFILE_APC_GENERIC_HID : configured_profile;
     memset(&current_metrics, 0, sizeof(ups_metrics_t));
     current_metrics.valid = false;
 
@@ -44,7 +53,23 @@ void apc_hid_parser_init(void)
     strcpy(current_metrics.battery_type, "PbAc");
     strcpy(current_metrics.power_failure_status, "OK");
 
-    ESP_LOGI(TAG, "🔋 APC HID parser initialized");
+    ESP_LOGI(TAG, "🔋 APC HID parser initialized (configured=%s, active=%s)",
+             ups_profile_name(configured_profile), ups_profile_name(active_profile));
+}
+
+void apc_hid_parser_set_profile(ups_profile_t profile)
+{
+    active_profile = ups_profile_validate((uint8_t)profile);
+    if (active_profile == UPS_PROFILE_AUTO) {
+        active_profile = UPS_PROFILE_APC_GENERIC_HID;
+    }
+    strlcpy(current_metrics.driver_name, ups_profile_name(active_profile), sizeof(current_metrics.driver_name));
+    ESP_LOGI(TAG, "🔋 APC HID parser active profile: %s", ups_profile_name(active_profile));
+}
+
+ups_profile_t apc_hid_parser_get_profile(void)
+{
+    return active_profile;
 }
 
 // Helper function to print hex dump
@@ -136,18 +161,37 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x09:  // Battery voltage (UPS.PowerSummary.Voltage) - UNRELIABLE on APC 051D:0003
-            // Report 0x09 returns garbage (191.12V) on APC Back-UPS XS 1000M.
-            // Report 0x0D is the authoritative battery voltage source.
-            // Only use 0x09 as a fallback if 0x0D hasn't provided a value yet.
-            ESP_LOGI(TAG, "   Type: Battery Voltage (Report 0x09 - unreliable)");
-            if (length >= 3 && target->battery_voltage < 1.0f) {
-                uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->battery_voltage = (float)voltage_raw / 100.0f;
-                ESP_LOGI(TAG, "   └─ Fallback voltage: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
-                updated = true;
+        case 0x09:
+            if (is_smt2200_profile()) {
+                ESP_LOGI(TAG, "   Type: SMT2200 PresentStatus bitfield");
+                if (length >= 3) {
+                    uint16_t flags = data[1] | (data[2] << 8);
+                    // Confirmed online sample for Jim's SMT2200: 09 A8 4A = 0x4AA8.
+                    // Exact off-battery bit meanings still need an on-battery capture.
+                    // Tentative line-present mapping: bit 3 is set in the online sample.
+                    target->status.online = (flags & (1u << 3)) != 0;
+                    target->status.charging = (flags & (1u << 5)) != 0;
+                    target->status.discharging = (flags & (1u << 6)) != 0;  // tentative until OB capture
+                    target->status.low_battery = (flags & (1u << 13)) != 0; // tentative
+                    target->status.overload = (flags & (1u << 7)) != 0;
+                    target->status.replace_battery = (flags & (1u << 11)) != 0;
+                    strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
+                    ESP_LOGI(TAG, "   └─ SMT2200 flags: 0x%04X online=%d charging=%d discharging=%d low=%d overload=%d replace=%d",
+                             flags, target->status.online, target->status.charging, target->status.discharging,
+                             target->status.low_battery, target->status.overload, target->status.replace_battery);
+                    updated = true;
+                }
             } else {
-                ESP_LOGI(TAG, "   └─ Skipped (0x0D already provided %.2fV)", target->battery_voltage);
+                // Generic/Back-UPS: Report 0x09 is an unreliable voltage fallback.
+                ESP_LOGI(TAG, "   Type: Battery Voltage (Report 0x09 - generic fallback)");
+                if (length >= 3 && target->battery_voltage < 1.0f) {
+                    uint16_t voltage_raw = data[1] | (data[2] << 8);
+                    target->battery_voltage = (float)voltage_raw / 100.0f;
+                    ESP_LOGI(TAG, "   └─ Fallback voltage: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
+                    updated = true;
+                } else {
+                    ESP_LOGI(TAG, "   └─ Skipped (0x0D already provided %.2fV)", target->battery_voltage);
+                }
             }
             break;
 
@@ -162,12 +206,22 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0B:  // Battery nominal voltage
-            ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
-            if (length >= 2) {
-                target->battery_nominal_voltage = (float)data[1];
-                ESP_LOGI(TAG, "   └─ Nominal: %.0fV", target->battery_nominal_voltage);
-                updated = true;
+        case 0x0B:  // Voltage/config-like value
+            if (is_smt2200_profile()) {
+                ESP_LOGI(TAG, "   Type: SMT2200 Voltage-like Report 0x0B");
+                if (length >= 3) {
+                    uint16_t raw = data[1] | (data[2] << 8);
+                    target->battery_nominal_voltage = (float)raw / 100.0f;  // scale pending, confirmed sample 0x154A=5450
+                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.2fV (scale/meaning pending)", raw, target->battery_nominal_voltage);
+                    updated = true;
+                }
+            } else {
+                ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
+                if (length >= 2) {
+                    target->battery_nominal_voltage = (float)data[1];
+                    ESP_LOGI(TAG, "   └─ Nominal: %.0fV", target->battery_nominal_voltage);
+                    updated = true;
+                }
             }
             break;
 
@@ -338,12 +392,26 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x14:  // Delay before shutdown (APCDelayBeforeShutdown)
-            ESP_LOGI(TAG, "   Type: Delay Before Shutdown");
-            if (length >= 2) {
-                target->delay_before_shutdown = (float)data[1];
-                ESP_LOGI(TAG, "   └─ Delay: %.0f seconds", target->delay_before_shutdown);
-                updated = true;
+        case 0x14:
+            if (is_smt2200_profile()) {
+                ESP_LOGI(TAG, "   Type: SMT2200 Audible Alarm / Beeper");
+                if (length >= 2) {
+                    uint8_t beeper_val = data[1];  // confirmed sample 14 02
+                    const char *state = "unknown";
+                    if (beeper_val == 1) state = "disabled";
+                    else if (beeper_val == 2) state = "enabled";
+                    else if (beeper_val == 3) state = "muted";
+                    strlcpy(target->beeper_status, state, sizeof(target->beeper_status));
+                    ESP_LOGI(TAG, "   └─ Beeper enum %u → %s", beeper_val, target->beeper_status);
+                    updated = true;
+                }
+            } else {
+                ESP_LOGI(TAG, "   Type: Delay Before Shutdown");
+                if (length >= 2) {
+                    target->delay_before_shutdown = (float)data[1];
+                    ESP_LOGI(TAG, "   └─ Delay: %.0f seconds", target->delay_before_shutdown);
+                    updated = true;
+                }
             }
             break;
 

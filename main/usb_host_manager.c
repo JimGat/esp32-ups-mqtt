@@ -191,6 +191,61 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 #define APC_PID_SMARTUPS 0x0003
 #define IS_APC_UPS(vid, pid) ((vid) == APC_VID && ((pid) == APC_PID_BACKUPS || (pid) == APC_PID_SMARTUPS))
 
+static ups_profile_t configured_ups_profile = UPS_PROFILE_AUTO;
+static ups_profile_t active_ups_profile = UPS_PROFILE_APC_GENERIC_HID;
+
+static const uint8_t smt2200_poll_reports[] = {
+    0x09,  // SMT2200 PresentStatus-style bitfield; confirmed online sample 09 A8 4A
+    0x0C,  // RemainingCapacity / battery charge; confirmed 0C 64 = 100%
+    0x0A,  // RunTimeToEmpty; confirmed 0A C0 12 = 4800s
+    0x0D,  // Battery voltage-like report; confirmed 0D B0 13, scale pending
+    0x0B,  // Voltage/config-like report; confirmed 0B 4A 15, scale pending
+    0x11,  // RemainingCapacityLimit / low charge threshold; confirmed 11 0A = 10%
+    0x14,  // AudibleAlarmControl / beeper enum; confirmed 14 02
+};
+
+static const uint8_t generic_apc_poll_reports[] = {
+    0x0A,  // Battery runtime (seconds, 16-bit LE)
+    0x06,  // Generic APC status flags
+    0x0D,  // Battery voltage (16-bit LE / 100)
+    0x08,  // Battery nominal/config voltage
+    0x0E,  // Full charge capacity
+    0x0F,  // Battery warning threshold
+    0x11,  // Battery low charge threshold
+    0x03,  // Battery chemistry type
+    0x07,  // UPS manufacture date
+    0x10,  // Generic beeper status
+};
+
+void usb_host_set_configured_profile(ups_profile_t profile)
+{
+    configured_ups_profile = ups_profile_validate((uint8_t)profile);
+    active_ups_profile = (configured_ups_profile == UPS_PROFILE_AUTO) ? UPS_PROFILE_APC_GENERIC_HID : configured_ups_profile;
+    ESP_LOGI(TAG, "USB profile configured=%s active=%s",
+             ups_profile_name(configured_ups_profile), ups_profile_name(active_ups_profile));
+}
+
+ups_profile_t usb_host_get_active_profile(void)
+{
+    return active_ups_profile;
+}
+
+static void resolve_usb_profile(uint16_t vid, uint16_t pid)
+{
+    ups_profile_t resolved = configured_ups_profile;
+    if (resolved == UPS_PROFILE_AUTO) {
+        // Current best-effort auto detection: APC VID 051D + PID 0003 is Jim's
+        // Smart-UPS SMT2200 class. Fall back to generic APC HID otherwise.
+        resolved = (vid == APC_VID && pid == APC_PID_SMARTUPS)
+                   ? UPS_PROFILE_APC_SMT2200
+                   : UPS_PROFILE_APC_GENERIC_HID;
+    }
+    active_ups_profile = resolved;
+    apc_hid_parser_set_profile(active_ups_profile);
+    ESP_LOGI(TAG, "🔎 UPS profile resolved: configured=%s active=%s (VID:PID=%04X:%04X)",
+             ups_profile_name(configured_ups_profile), ups_profile_name(active_ups_profile), vid, pid);
+}
+
 //══════════════════════════════════════════════════════════════════════════════
 // USB HOST STATE TRACKING
 //══════════════════════════════════════════════════════════════════════════════
@@ -425,6 +480,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
             if (IS_APC_UPS(dev_desc->idVendor, dev_desc->idProduct)) {
                 ESP_LOGI(TAG, "🔌 APC UPS found! VID:PID = %04X:%04X",
                          dev_desc->idVendor, dev_desc->idProduct);
+                resolve_usb_profile(dev_desc->idVendor, dev_desc->idProduct);
 
                 ups_device = dev_hdl;
                 ups_connected = true;
@@ -954,30 +1010,6 @@ void usb_host_task(void *arg)
     const int64_t POLL_INTERVAL_MS = 10000;  // Poll feature reports every 10 seconds
     bool initial_poll_done = false;
 
-    // Report IDs to actively poll via GET_REPORT (feature reports)
-    // Only include reports that actually respond on APC Back-UPS XS 1000M (051D:0003)
-    // Reports that STALL on this UPS: 0x09, 0x15, 0x16, 0x17, 0x18, 0x20, 0x24,
-    //   0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x50, 0x52
-    // Note: 0x31 (input voltage) and 0x50 (load %) are NOT available as feature
-    // reports on this UPS -- they may arrive as interrupt IN reports only.
-    // Note: 0x09 returns garbage (191.12V), 0x0D is authoritative for voltage.
-    const uint8_t poll_reports[] = {
-        // === CRITICAL METRICS ===
-        0x0A,  // Battery runtime (seconds, 16-bit LE) - WORKS
-        0x06,  // Status flags (ACPresent, Charging, etc.) - WORKS
-        0x0D,  // Battery voltage (16-bit LE / 100) - WORKS, authoritative
-
-        // === BATTERY INFO ===
-        0x08,  // Battery nominal voltage (per-cell, 0x78 = 1.2V PbAc)
-        0x0E,  // Full charge capacity
-        0x0F,  // Battery charge warning threshold (50%)
-        0x11,  // Battery charge low threshold (10%)
-        0x03,  // Battery chemistry type (1 = PbAc)
-        0x07,  // UPS manufacture date
-        0x10,  // Beeper status (enabled/disabled/muted)
-    };
-    const int num_poll_reports = sizeof(poll_reports) / sizeof(poll_reports[0]);
-
     while (1) {
         loop_count++;
 
@@ -1073,9 +1105,17 @@ void usb_host_task(void *arg)
                                  (now_ms - last_poll_time) >= POLL_INTERVAL_MS;
             
             if (time_for_poll) {
+                const uint8_t *poll_reports = generic_apc_poll_reports;
+                int num_poll_reports = sizeof(generic_apc_poll_reports) / sizeof(generic_apc_poll_reports[0]);
+                if (active_ups_profile == UPS_PROFILE_APC_SMT2200) {
+                    poll_reports = smt2200_poll_reports;
+                    num_poll_reports = sizeof(smt2200_poll_reports) / sizeof(smt2200_poll_reports[0]);
+                }
+
                 initial_poll_done = true;
                 last_poll_time = now_ms;
-                ESP_LOGI(TAG, "🔄 Active polling cycle %d: Requesting %d reports... (elapsed %lld ms since last poll)", poll_cycle++, num_poll_reports, initial_poll_done ? (now_ms - last_poll_time + POLL_INTERVAL_MS) : 0);
+                ESP_LOGI(TAG, "🔄 Active polling cycle %d [%s]: Requesting %d reports...",
+                         poll_cycle++, ups_profile_name(active_ups_profile), num_poll_reports);
 
                 for (int i = 0; i < num_poll_reports; i++) {
                     uint8_t report_id = poll_reports[i];

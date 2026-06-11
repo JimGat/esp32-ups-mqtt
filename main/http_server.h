@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include "ups_profile.h"
 
 typedef struct {
     char wifi_ssid[64];
@@ -15,6 +16,7 @@ typedef struct {
     char web_pass[64];
     uint32_t publish_interval_ms;
     char device_label[64];
+    uint8_t ups_profile;  // ups_profile_t stored as NVS-safe uint8_t
 } app_config_t;
 
 esp_err_t config_load(app_config_t *config);

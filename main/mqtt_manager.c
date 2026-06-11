@@ -13,6 +13,14 @@ static bool mqtt_connected = false;
 static char device_id[64] = {0};
 static char mqtt_base_topic[96] = {0};
 static uint8_t device_mac[6] = {0};
+static char mqtt_device_model[64] = "Generic APC HID";
+
+void mqtt_set_device_model(const char *model)
+{
+    if (model != NULL && model[0] != '\0') {
+        strlcpy(mqtt_device_model, model, sizeof(mqtt_device_model));
+    }
+}
 
 static void sanitize_label(const char *input, char *output, size_t output_size)
 {
@@ -187,12 +195,13 @@ esp_err_t mqtt_publish_discovery(const char *sensor_name, const char *friendly_n
             "\"identifiers\":[\"%s\"],"
             "\"name\":\"APC UPS (%02X:%02X:%02X:%02X:%02X:%02X)\","
             "\"manufacturer\":\"APC\","
-            "\"model\":\"Back-UPS XS 1000M\""
+            "\"model\":\"%s\""
         "}",
         friendly_name, mqtt_base_topic, sensor_name, device_id, sensor_name,
         device_id,
         device_mac[0], device_mac[1], device_mac[2],
-        device_mac[3], device_mac[4], device_mac[5]
+        device_mac[3], device_mac[4], device_mac[5],
+        mqtt_device_model
     );
 
     if (unit != NULL && strlen(unit) > 0) {

@@ -168,6 +168,18 @@ Captured from Jim's APC Smart-UPS SMT2200 while online / line power present.
 | Input `0x0D`, len 8 | `0D B0 13` | 5040 | Same as Feature `0x0D`; voltage-like report is accessible as Input and Feature. |
 | Input `0x0B`, len 8 | `0B 4A 15` | 5450 | Same as Feature `0x0B`; voltage usage report is accessible as Input and Feature. |
 
+### Firmware Profile Implementation
+
+v0.3.24-dev adds config-selectable profiles:
+
+| Profile | Behavior |
+|---|---|
+| Auto Detect | Best-effort. APC VID:PID `051D:0003` resolves to APC Smart-UPS SMT2200; otherwise Generic APC HID. |
+| APC Smart-UPS SMT2200 | Polls confirmed reports `0x09`, `0x0C`, `0x0A`, `0x0D`, `0x0B`, `0x11`, `0x14` and profile-gates parsing for `0x09` status and `0x14` beeper. |
+| Generic APC HID | Preserves earlier generic/backward-compatible APC polling and decoding. |
+
+SMT2200 fields still marked scale/bit-pending are intentionally conservative in the web/MQTT layer until more state-change captures are available.
+
 ### Next Capture Tasks
 
 1. Preserve the v0.3.23 clean descriptor dump as the APC SMT2200 baseline: payload 515 bytes, raw 523 bytes, payload-only view.

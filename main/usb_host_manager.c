@@ -120,13 +120,13 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             ESP_LOGI(TAG, "%04x: %s", i, line);
         }
         for (int i = 0; i < record_len; i += USB_DEBUG_MAX_RECORD_DATA) {
-            char note[56];
+            char note[80];
             int chunk = record_len - i;
             if (chunk > USB_DEBUG_MAX_RECORD_DATA) chunk = USB_DEBUG_MAX_RECORD_DATA;
             snprintf(note, sizeof(note), "%s offset %d", include_setup ? "descriptor raw" : "descriptor payload", i);
             usb_debug_record_add(USB_DEBUG_REC_DESCRIPTOR, 0, 0, record_data + i, chunk, note);
         }
-        char summary[80];
+        char summary[96];
         snprintf(summary, sizeof(summary), "descriptor complete payload=%d raw=%d view=%s",
                  payload_len, transfer->actual_num_bytes, include_setup ? "raw-control" : "payload-only");
         usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, summary);
@@ -139,7 +139,7 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
     usb_transfer_t *ctrl_xfer = NULL;
-    const size_t payload_len = 512;
+    const size_t payload_len = 1024;  // Some Smart-UPS descriptors exceed 512 bytes
     const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
     const size_t alloc_size = (xfer_size + 63) & ~((size_t)63);  // ESP-IDF USB host wants 64-byte aligned allocation sizes
 

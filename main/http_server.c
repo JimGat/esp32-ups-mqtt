@@ -871,7 +871,7 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
     size_t n = usb_debug_get_records(recs, 32, 0);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-    char line[512];
+    char line[640];
     for (size_t i = 0; i < n; i++) {
         char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1] = {0}; int pos = 0;
         size_t data_len = recs[i].length > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : recs[i].length;

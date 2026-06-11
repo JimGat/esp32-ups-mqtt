@@ -53,7 +53,7 @@ typedef struct {
     uint8_t status;
     uint16_t length;
     uint8_t data[USB_DEBUG_MAX_RECORD_DATA];
-    char note[48];
+    char note[80];
 } usb_debug_record_t;
 
 esp_err_t usb_debug_set_config(const usb_debug_config_t *cfg);

@@ -36,7 +36,7 @@ Recommended fields for each protocol profile:
 | USB VID:PID | `051D:0003` |
 | Project target | Jim's desk UPS bridge |
 | Descriptor source | ESP32 `/usb-debug` descriptor dump, `usbdump.txt` |
-| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison by default; v0.3.22+ can optionally include the raw setup packet for deep USB debugging. |
+| Dump status | Valid descriptor dump, but first v0.3.20 capture included the 8-byte setup packet and likely missed the final 8 descriptor bytes. v0.3.21+ strips setup packet for clean comparison by default; v0.3.22+ can optionally include the raw setup packet for deep USB debugging. v0.3.23+ requests 1024 bytes because the SMT2200 descriptor continues past 512 bytes. |
 | HID descriptor start | `05 84 09 04 A1 01 ...` |
 | Family | HID Power Device / Battery System, Smart-UPS variant |
 
@@ -79,7 +79,7 @@ Starting in v0.3.22-dev, `/usb-debug` has two descriptor dump views:
 | `0x0C` | Input + Feature | Remaining Capacity | `battery_charge` | Confirmed descriptor, confirmed runtime behavior | Likely payload byte after report ID is percent. |
 | `0x0D` | Input + Feature | Voltage-like Battery System value | `battery_voltage` | Confirmed descriptor, confirmed runtime behavior | Unit suggests volts. Use live payload samples to confirm scale. |
 | `0x0A` | Feature | Runtime/config-style value | `battery_runtime` currently | Likely | Existing parser saw `0A C0 12` as 4800 seconds / 80 min. Keep mapping but verify descriptor semantics/scaling. |
-| `0x07` | Input + Feature bitfield | PresentStatus-style flags | `status`, `power_failure`, flags | Likely/needs bit confirmation | Dense 1-bit fields include AC Present, Battery Present, Overload, Shutdown Requested, Charging, Discharging, Need Replacement, Below Remaining Capacity Limit, and other status/vendor bits. |
+| `0x09` | Input + Feature bitfield plus 16-bit values | PresentStatus-style flags and related status/threshold fields | `status`, `power_failure`, flags, possible load flag | Likely/needs bit confirmation | Clean v0.3.22 dump shows dense 1-bit PresentStatus-style fields under report `0x09`, not `0x07`. Includes AC/line-present-like usage, Battery Present, Overload, Shutdown Requested, Charging, Discharging, Need Replacement, Below Remaining Capacity Limit, Percent Load usage/flag, and vendor bit. |
 | `0x14` | Input + Feature-like | Audible Alarm Control | `beeper_status` | Likely | 8-bit enum, logical range 1..3. Do not expose writes until SET_REPORT is deliberately implemented and gated. |
 | `0x11` | Feature | Capacity / low-charge threshold style | `battery_charge_low` | Likely | Prior live debug showed `11 0A` = 10%. |
 
@@ -105,9 +105,9 @@ These appear on vendor page `0xFF86` and should be captured for future decoding,
 | `0x31` | Back-UPS input voltage | Do not assume / likely stalls | This came from Back-UPS assumptions and should not be used for SMT2200 without descriptor confirmation. |
 | `0x50` | Back-UPS load percent | Do not assume / likely stalls | SMT2200 descriptor points toward status/report `0x07` and/or vendor reports for load-related data. |
 
-### Status Bitfield Hypothesis for Report `0x07`
+### Status Bitfield Hypothesis for Report `0x09`
 
-Report `0x07` appears to be a packed one-bit PresentStatus-style report. Descriptor-derived usage order suggests the firmware should decode cautiously and expose uncertain bits as raw flags until confirmed with live power events.
+Report `0x09` appears to be a packed one-bit PresentStatus-style report in the clean v0.3.22 descriptor dump. Earlier `0x07` notes came from a malformed/truncated parse and should be ignored for SMT2200. Descriptor-derived usage order suggests the firmware should decode cautiously and expose uncertain bits as raw flags until confirmed with live power events.
 
 Likely flags include:
 
@@ -122,9 +122,13 @@ Likely flags include:
 | Need Replacement | Replace battery |
 | Below Remaining Capacity Limit | Low battery / below threshold |
 
+### Descriptor Length Discovery
+
+The clean v0.3.22 payload-only dump returned exactly 512 descriptor bytes and ended mid-HID-item (`... 85 92 09 F4 15 00 26 FF 00 75 08 95`). This indicates the SMT2200 report descriptor is longer than 512 bytes. v0.3.23-dev increases the requested descriptor payload to 1024 bytes so the final vendor report definitions can be captured.
+
 ### Next Capture Tasks
 
-1. Use v0.3.21+ `/usb-debug` to generate a clean descriptor dump.
+1. Use v0.3.23+ `/usb-debug` to generate a clean 1024-byte descriptor dump.
 2. Confirm descriptor payload length and final tail bytes, especially likely report `0x92`.
 3. Manually GET_REPORT likely IDs and preserve sample payloads:
    - `0x07` status bitfield

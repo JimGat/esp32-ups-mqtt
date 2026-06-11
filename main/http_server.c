@@ -588,6 +588,7 @@ static esp_err_t logs_handler(httpd_req_t *req)
     }
 
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
     if (!log_mutex || !xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100))) {
@@ -670,6 +671,7 @@ static esp_err_t metrics_handler(httpd_req_t *req)
     if (!check_basic_auth(req)) return ESP_OK;
 
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
     const ups_metrics_t *m = apc_hid_get_metrics();
@@ -699,6 +701,7 @@ static esp_err_t metrics_handler(httpd_req_t *req)
 static esp_err_t version_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     char buf[192];
     snprintf(buf, sizeof(buf),

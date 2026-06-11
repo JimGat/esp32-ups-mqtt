@@ -39,6 +39,9 @@ esp_err_t reboot_handler(httpd_req_t *req)
 /* ---- GET /system ---- */
 esp_err_t system_info_handler(httpd_req_t *req)
 {
+    // Prevent browser caching so uptime always shows current value
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    
     const esp_partition_t *running = esp_ota_get_running_partition();
     const esp_partition_t *boot = esp_ota_get_boot_partition();
     const esp_app_desc_t *app_desc = esp_app_get_description();

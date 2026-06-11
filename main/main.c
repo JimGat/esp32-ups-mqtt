@@ -9,6 +9,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "lwip/apps/sntp.h"
 #include "nvs_flash.h"
 #include "mqtt_client.h"
 
@@ -401,6 +402,13 @@ void app_main(void)
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
     ESP_LOGI(TAG, "MQTT Broker: %s", app_config.mqtt_url);
+    
+    // 🕒 Initialize SNTP for accurate local time (logs, scheduled tasks)
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
+    ESP_LOGI(TAG, "🕒 SNTP initialized (pool.ntp.org)");
+    
     ESP_LOGI(TAG, "🌐 Web UI: http://<device-ip>/  Status: http://<device-ip>/status");
 #ifdef DISABLE_USB_HOST
     ESP_LOGW(TAG, "🐛 DEBUG MODE: USB Host disabled, using simulated data only");

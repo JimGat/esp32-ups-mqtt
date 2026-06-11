@@ -496,7 +496,7 @@ static esp_err_t read_hid_report(uint8_t *buffer, size_t buffer_size, size_t *ac
     transfer->callback = transfer_callback;
     transfer->context = NULL;
     transfer->num_bytes = buffer_size;
-    transfer->timeout_ms = 300;  // Short timeout - UPS sends every ~8s
+    transfer->timeout_ms = 2000;  // Increased from 300ms - SMT2200 USB controller is notoriously slow
 
     // Submit transfer
     err = usb_host_transfer_submit(transfer);

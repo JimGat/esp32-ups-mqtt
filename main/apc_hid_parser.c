@@ -191,7 +191,9 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
                     target->status.online = input_power_present && !input_power_fail;
                     target->status.charging = charging;
                     target->status.discharging = discharging || input_power_fail;
-                    target->status.low_battery = (flags & 0x0008) != 0; // Bit 3: Below Remaining Capacity
+                    // Derive low battery from actual charge % (APC standard is <20%), 
+                    // as HID Bit 3 is unreliable and triggers even at 100% charge.
+                    target->status.low_battery = (target->battery_charge < 20.0f);
                     
                     strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
                     
@@ -243,15 +245,20 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0D:  // Battery voltage (interrupt endpoint) - 16-bit LE, exponent -2
-            // Confirmed on APC Back-UPS XS 1000M (4x12V = 48V pack):
-            //   0D B0 13 → 0x13B0 = 5040 / 100 = 50.40V (charging)
-            //   0D 64 14 → 0x1464 = 5220 / 100 = 52.20V (float)
+        case 0x0D:  // Battery voltage (interrupt endpoint)
+            // APC SMT2200 HID Quirk: The firmware occasionally switches from centivolts (/100) 
+            // to decivolts (/10) when the raw value drops below 1000. 
+            // A 48V pack will never be 4.2V (0x01A4), but 42.0V is a valid discharged state.
             ESP_LOGI(TAG, "   Type: Battery Voltage (interrupt)");
             if (length >= 3) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->battery_voltage = (float)voltage_raw / 100.0f;
-                ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
+                if (voltage_raw < 1000) {
+                    target->battery_voltage = (float)voltage_raw / 10.0f;
+                    ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 10) [decivolt quirk]", target->battery_voltage, voltage_raw);
+                } else {
+                    target->battery_voltage = (float)voltage_raw / 100.0f;
+                    ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
+                }
                 updated = true;
             }
             break;

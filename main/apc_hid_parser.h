@@ -64,6 +64,7 @@ typedef struct {
     // Status
     ups_status_t status;
     char status_string[64];
+    char status_confidence[32];        // "confirmed"/"likely"/"tentative"/"unknown"
 
     uint32_t last_update_ms;
     bool valid;
@@ -73,7 +74,20 @@ void apc_hid_parser_init(ups_profile_t configured_profile);
 void apc_hid_parser_set_profile(ups_profile_t active_profile);
 ups_profile_t apc_hid_parser_get_profile(void);
 bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length, ups_metrics_t *metrics);
+
+/**
+ * Get current metrics snapshot atomically (under mutex).
+ * Caller receives a consistent copy of metrics at snapshot time.
+ * Safe for concurrent access from MQTT, HTTP, and USB polling tasks.
+ */
+ups_metrics_t apc_hid_get_metrics_snapshot(void);
+
+/**
+ * Get pointer to metrics (legacy/internal).
+ * Do NOT use this from MQTT or HTTP handlers; use apc_hid_get_metrics_snapshot() instead.
+ */
 const ups_metrics_t* apc_hid_get_metrics(void);
+
 void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buffer_size);
 
 #endif // APC_HID_PARSER_H

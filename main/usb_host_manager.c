@@ -62,6 +62,7 @@
 
 #include "usb_host_manager.h"
 #include "apc_hid_parser.h"
+#include "ups_hid_map.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -538,6 +539,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 
                 ups_device = dev_hdl;
                 ups_connected = true;
+                /* v0.4: Record connection event */
+                ups_transport_stats_record_connected();
 
                 // Claim HID interface FIRST (before inspecting)
                 err = usb_host_interface_claim(usb_client, ups_device, HID_INTERFACE, 0);
@@ -586,6 +589,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
             if (event_msg->dev_gone.dev_hdl == ups_device) {
                 ups_connected = false;
                 ups_device = NULL;
+                /* v0.4: Record disconnection event */
+                ups_transport_stats_record_disconnected();
                 ESP_LOGI(TAG, "❌ APC UPS disconnected");
             }
             break;
@@ -776,15 +781,23 @@ static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, ui
             if (*actual_length > 0 && *actual_length <= buffer_size) {
                 memcpy(buffer, transfer->data_buffer + 8, *actual_length);
                 ESP_LOGI(TAG, "✅ GET_REPORT 0x%02X: %d bytes", report_id, *actual_length);
+                /* v0.4: Record transport stats */
+                ups_transport_stats_record_get_report_success();
                 err = ESP_OK;
             } else {
                 err = ESP_ERR_INVALID_SIZE;
+                /* v0.4: Record error */
+                ups_transport_stats_record_get_report_error(transfer->status);
             }
         } else if (transfer->status == USB_TRANSFER_STATUS_STALL) {
             ESP_LOGI(TAG, "⚠️  Report 0x%02X not available (STALL)", report_id);
+            /* v0.4: Record STALL */
+            ups_transport_stats_record_get_report_stall();
             err = ESP_ERR_NOT_SUPPORTED;
         } else {
             ESP_LOGI(TAG, "⚠️  GET_REPORT 0x%02X failed, status=%d", report_id, transfer->status);
+            /* v0.4: Record error */
+            ups_transport_stats_record_get_report_error(transfer->status);
             err = ESP_FAIL;
         }
         usb_host_transfer_free(transfer);
@@ -792,6 +805,9 @@ static esp_err_t get_hid_report_typed(uint8_t report_type, uint8_t report_id, ui
         ESP_LOGW(TAG, "⚠️  GET_REPORT 0x%02X timeout after %dms, aborting", report_id, max_wait_ms);
         ESP_LOGW(TAG, "   Transfer status: %d (0=no_device, 1=completed, 2=error, 3=timed_out, 4=cancelled, 5=stall, 6=overflow, 7=skipped)",
                  transfer->status);
+
+        /* v0.4: Record timeout */
+        ups_transport_stats_record_get_report_timeout();
 
         // Cancel and free the transfer
         // Don't wait forever - the UPS doesn't support this report ID
@@ -1009,6 +1025,9 @@ esp_err_t usb_host_init(void)
         return ESP_FAIL;
     }
 
+    /* v0.4: Initialize transport health stats */
+    ups_transport_stats_init();
+
     // Install USB Host library
     ESP_LOGI(TAG, "DEBUG: Installing USB Host library");
     const usb_host_config_t host_config = {
@@ -1162,6 +1181,7 @@ void usb_host_task(void *arg)
                 }
 
                 initial_poll_done = true;
+                int64_t poll_start_ms = esp_timer_get_time() / 1000;
                 last_poll_time = now_ms;
                 ESP_LOGI(TAG, "🔄 Active polling cycle %d [%s]: Requesting %d reports...",
                          poll_cycle++, ups_profile_name(active_ups_profile), num_poll_reports);
@@ -1196,7 +1216,11 @@ void usb_host_task(void *arg)
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
 
-                ESP_LOGI(TAG, "✅ Polling cycle %d complete", poll_cycle - 1);
+                /* v0.4: Record poll cycle completion and duration */
+                int64_t poll_end_ms = esp_timer_get_time() / 1000;
+                uint32_t poll_duration = (uint32_t)(poll_end_ms - poll_start_ms);
+                ups_transport_stats_record_poll_complete(poll_duration);
+                ESP_LOGI(TAG, "✅ Polling cycle %d complete (%lu ms)", poll_cycle - 1, (unsigned long)poll_duration);
             }
         }
 

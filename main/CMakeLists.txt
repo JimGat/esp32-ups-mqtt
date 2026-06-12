@@ -5,6 +5,7 @@ idf_component_register(
         "mqtt_manager.c"
         "power_event.c"
         "apc_hid_parser.c"
+        "ups_hid_map.c"
         "usb_host_manager.c"
         "http_server.c"
         "ota_update.c"

@@ -3,6 +3,7 @@
 #include "usb_host_manager.h"
 #include "wifi_manager.h"
 #include "ota_update.h"
+#include "ups_hid_map.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -394,7 +395,12 @@ static esp_err_t status_handler(httpd_req_t *req)
     send_page_header(req, STATUS_TITLE, false);
 
     /* UPS Metrics */
-    const ups_metrics_t *m = apc_hid_get_metrics();
+    ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
+    const ups_metrics_t *m = &metrics_snapshot;
+    ups_transport_stats_t stats = ups_transport_stats_get();
+    uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    uint32_t last_poll_age_ms = (stats.last_poll_ms > 0 && now_ms >= stats.last_poll_ms) ? (now_ms - stats.last_poll_ms) : 0;
+    const char *transport_health = (stats.get_report_error || stats.get_report_timeout) ? "DEGRADED" : "OK";
 
     httpd_resp_sendstr_chunk(req,
         "<div class='card'><h2>UPS Metrics</h2><table id='mtbl'>");
@@ -402,11 +408,25 @@ static esp_err_t status_handler(httpd_req_t *req)
     if (m->valid) {
         snprintf(buf, sizeof(buf),
             "<tr><th>Status</th><td class='val %s'>%s</td></tr>"
+            "<tr><th>Status Confidence</th><td class='val'>%s</td></tr>",
+            m->status.online ? "online" : "offline",
+            m->status_string,
+            m->status_confidence);
+        httpd_resp_sendstr_chunk(req, buf);
+
+        snprintf(buf, sizeof(buf),
+            "<tr><th>Active Profile</th><td class='val'>%s / NUT-style HID</td></tr>"
+            "<tr><th>Transport Health</th><td class='val'>%s</td></tr>"
+            "<tr><th>Last Poll Age</th><td class='val'>%lu ms</td></tr>",
+            ups_profile_name(apc_hid_parser_get_profile()),
+            transport_health,
+            (unsigned long)last_poll_age_ms);
+        httpd_resp_sendstr_chunk(req, buf);
+
+        snprintf(buf, sizeof(buf),
             "<tr><th>Battery Charge</th><td class='val'>%.0f%%</td></tr>"
             "<tr><th>Battery Voltage</th><td class='val'>%.1f V</td></tr>"
             "<tr><th>Battery Runtime</th><td class='val'>%.0f s (%.1f min)</td></tr>",
-            m->status.online ? "online" : "offline",
-            m->status_string,
             m->battery_charge,
             m->battery_voltage,
             m->battery_runtime, m->battery_runtime / 60.0f);
@@ -418,6 +438,9 @@ static esp_err_t status_handler(httpd_req_t *req)
             m->input_voltage, m->load_percent);
         httpd_resp_sendstr_chunk(req, buf);
 
+        if (strcmp(m->status_confidence, "confirmed") != 0) {
+            httpd_resp_sendstr_chunk(req, "<tr><td colspan='2' class='warn'>Status not descriptor-confirmed. Canonical UPS status remains UNKNOWN until NUT/descriptor PresentStatus or APCLineFailCause mapping is validated.</td></tr>");
+        }
         if (m->nominal_power > 0) {
             snprintf(buf, sizeof(buf),
                 "<tr><th>Nominal Power</th><td class='val'>%.0f W</td></tr>",
@@ -688,16 +711,32 @@ static esp_err_t metrics_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
-    const ups_metrics_t *m = apc_hid_get_metrics();
+    ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
+    const ups_metrics_t *m = &metrics_snapshot;
+    ups_transport_stats_t stats = ups_transport_stats_get();
+    uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    uint32_t last_poll_age_ms = (stats.last_poll_ms > 0 && now_ms >= stats.last_poll_ms) ? (now_ms - stats.last_poll_ms) : 0;
+    const char *transport_health = (stats.get_report_error || stats.get_report_timeout) ? "DEGRADED" : "OK";
 
-    char buf[512];
+    char buf[768];
     snprintf(buf, sizeof(buf),
-        "{\"status\":\"%s\",\"status_class\":\"%s\","
+        "{\"status\":\"%s\",\"status_class\":\"%s\",\"status_confidence\":\"%s\","
+        "\"active_profile\":\"%s\",\"transport_health\":\"%s\",\"last_poll_age_ms\":%lu,"
+        "\"poll_cycles\":%lu,\"get_report_success\":%lu,\"get_report_timeout\":%lu,\"get_report_stall\":%lu,\"get_report_error\":%lu,"
         "\"charge\":%.0f,\"voltage\":%.1f,\"runtime\":%.0f,\"runtime_min\":%.1f,"
         "\"input_voltage\":%.0f,\"load\":%.0f,"
         "\"nominal_power\":%.0f,\"input_nominal\":%.0f,\"beeper\":\"%s\"}",
         m->status_string,
         m->status.online ? "online" : "offline",
+        m->status_confidence,
+        ups_profile_name(apc_hid_parser_get_profile()),
+        transport_health,
+        (unsigned long)last_poll_age_ms,
+        (unsigned long)stats.poll_cycles_completed,
+        (unsigned long)stats.get_report_success,
+        (unsigned long)stats.get_report_timeout,
+        (unsigned long)stats.get_report_stall,
+        (unsigned long)stats.get_report_error,
         m->battery_charge,
         m->battery_voltage,
         m->battery_runtime, m->battery_runtime / 60.0f,

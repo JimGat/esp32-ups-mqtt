@@ -19,6 +19,7 @@
 #include "usb_host_manager.h"
 #include "http_server.h"
 #include "power_event.h"
+#include "ups_hid_map.h"
 
 static const char *TAG = "main";
 static app_config_t app_config;
@@ -26,7 +27,12 @@ static app_config_t app_config;
 
 static void publish_immediate_power_snapshot(const ups_metrics_t *metrics)
 {
-    mqtt_publish_string("status", metrics->status_string);
+    if (strcmp(metrics->status_confidence, "confirmed") == 0) {
+        mqtt_publish_string("status", metrics->status_string);
+    } else {
+        ESP_LOGW(TAG, "DATA_QUALITY: immediate status publish skipped; status_confidence=%s", metrics->status_confidence);
+        mqtt_publish_string("status", "UNKNOWN");
+    }
     mqtt_publish_metric("input_voltage", metrics->input_voltage, "V");
     mqtt_publish_metric("load_percent", metrics->load_percent, "%");
     mqtt_publish_metric("battery_charge", metrics->battery_charge, "%");
@@ -46,7 +52,8 @@ static void power_event_task(void *arg)
 
     while (1) {
         if (mqtt_is_connected()) {
-            const ups_metrics_t *metrics = apc_hid_get_metrics();
+            ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
+            const ups_metrics_t *metrics = &metrics_snapshot;
             power_event_type_t event = power_event_classify(&event_state, metrics);
 
             if (event != POWER_EVENT_NONE) {
@@ -126,7 +133,8 @@ static void mqtt_publish_task(void *arg)
 
     while (1) {
         if (mqtt_is_connected()) {
-            const ups_metrics_t *metrics = apc_hid_get_metrics();
+            ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
+            const ups_metrics_t *metrics = &metrics_snapshot;
             
             if (metrics->valid) {
                 ESP_LOGI(TAG, "═══════════════════════════════════════════");
@@ -205,8 +213,13 @@ static void mqtt_publish_task(void *arg)
                     mqtt_publish_metric("nominal_power", metrics->nominal_power, "W");
                 }
 
-                ESP_LOGI(TAG, "   🚦 status → %s", metrics->status_string);
-                mqtt_publish_string("status", metrics->status_string);
+                ESP_LOGI(TAG, "   🚦 status → %s (confidence=%s)", metrics->status_string, metrics->status_confidence);
+                if (strcmp(metrics->status_confidence, "confirmed") == 0) {
+                    mqtt_publish_string("status", metrics->status_string);
+                } else {
+                    ESP_LOGW(TAG, "DATA_QUALITY: canonical status not descriptor/NUT-confirmed; publishing UNKNOWN instead of guessed status");
+                    mqtt_publish_string("status", "UNKNOWN");
+                }
 
                 // UPS configuration and timers
                 if (strlen(metrics->beeper_status) > 0) {
@@ -284,6 +297,7 @@ static void simulate_ups_data_task(void *arg)
         .valid = true,
     };
     
+    strlcpy(test_metrics.status_confidence, "confirmed", sizeof(test_metrics.status_confidence));
     apc_hid_format_status(&test_metrics.status, test_metrics.status_string, 
                          sizeof(test_metrics.status_string));
     

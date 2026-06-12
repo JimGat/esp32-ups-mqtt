@@ -28,11 +28,15 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "apc_hid_parser";
 static ups_metrics_t current_metrics = {0};
 static ups_profile_t configured_profile = UPS_PROFILE_AUTO;
 static ups_profile_t active_profile = UPS_PROFILE_APC_GENERIC_HID;
+
+/* v0.4: Atomic snapshot protection for concurrent access */
+static SemaphoreHandle_t metrics_mutex = NULL;
 
 static bool is_smt2200_profile(void)
 {
@@ -51,7 +55,14 @@ void apc_hid_parser_init(ups_profile_t profile)
     strcpy(current_metrics.driver_version, "1.0.0");
     strcpy(current_metrics.driver_state, "running");
     strcpy(current_metrics.battery_type, "PbAc");
-    strcpy(current_metrics.power_failure_status, "OK");
+    strcpy(current_metrics.power_failure_status, "UNKNOWN");
+    strcpy(current_metrics.status_string, "UNKNOWN");
+    strcpy(current_metrics.status_confidence, "unmapped");
+
+    /* v0.4: Create snapshot mutex for atomic access */
+    if (metrics_mutex == NULL) {
+        metrics_mutex = xSemaphoreCreateMutex();
+    }
 
     ESP_LOGI(TAG, "🔋 APC HID parser initialized (configured=%s, active=%s)",
              ups_profile_name(configured_profile), ups_profile_name(active_profile));
@@ -101,6 +112,12 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
     ESP_LOGI(TAG, "   Report ID: 0x%02X (%d)", report_id, report_id);
     log_hex_dump("   Data", data, length);
 
+    /* v0.4: Lock metrics before updating current_metrics */
+    bool use_lock = (metrics == NULL);
+    if (use_lock && metrics_mutex != NULL) {
+        xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(500));
+    }
+
     // Use current_metrics if metrics pointer is NULL
     ups_metrics_t *target = (metrics != NULL) ? metrics : &current_metrics;
     bool updated = false;
@@ -148,6 +165,8 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
                 target->status.charging = (status_byte & 0x02) != 0;     // Charging
                 target->status.low_battery = (status_byte & 0x08) != 0;  // LowBattery
 
+                strlcpy(target->status_confidence, "confirmed", sizeof(target->status_confidence));
+                strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
                 ESP_LOGI(TAG, "   └─ Status byte 0x%02X: ACPresent=%d Charging=%d Discharging=%d LowBatt=%d",
                          status_byte, target->status.online, target->status.charging,
                          target->status.discharging, target->status.low_battery);
@@ -181,29 +200,19 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
 
         case 0x09:
             if (is_smt2200_profile()) {
-                ESP_LOGI(TAG, "   Type: SMT2200 PresentStatus bitfield");
+                ESP_LOGI(TAG, "   Type: SMT2200 raw PresentStatus candidate (UNMAPPED)");
                 if (length >= 3) {
                     uint16_t flags = data[1] | (data[2] << 8);
-                    // Standard APC HID PresentStatus bits:
-                    // Bit 0: Discharging
-                    // Bit 1: Charging
-                    // Bit 5: Input Power Present (1 = OL, 0 = OB)
-                    // Bit 6: Input Power Fail (1 = OB, 0 = OL)
-                    bool input_power_present = (flags & 0x0020) != 0;
-                    bool input_power_fail = (flags & 0x0040) != 0;
-                    bool charging = (flags & 0x0002) != 0;
-                    bool discharging = (flags & 0x0001) != 0;
-
-                    target->status.online = input_power_present && !input_power_fail;
-                    target->status.charging = charging;
-                    target->status.discharging = discharging || input_power_fail;
-                    // Do NOT set low_battery here. It will be correctly derived in the 0x0C 
-                    // handler after the actual battery_charge value is known.
-                    
-                    strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
-                    
-                    ESP_LOGI(TAG, "   └─ SMT2200 raw status: 0x%04X (OL=%d, OB=%d, CHRG=%d, DISCHRG=%d)",
-                             flags, target->status.online, input_power_fail, charging, discharging);
+                    /* v0.4 NUT-style rule: the pull test proved report 0x09 stayed
+                       unchanged while line state changed. Preserve the raw field for
+                       debug/provenance, but do NOT use guessed bits as canonical OL/OB. */
+                    target->status.online = false;
+                    target->status.charging = false;
+                    target->status.discharging = false;
+                    strlcpy(target->status_string, "UNKNOWN", sizeof(target->status_string));
+                    strlcpy(target->status_confidence, "unmapped", sizeof(target->status_confidence));
+                    strlcpy(target->power_failure_status, "UNKNOWN", sizeof(target->power_failure_status));
+                    ESP_LOGW(TAG, "   └─ SMT2200 raw status 0x%04X is UNMAPPED; canonical UPS status remains UNKNOWN", flags);
                     updated = true;
                 }
             } else {
@@ -654,9 +663,13 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
         target->last_update_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         target->valid = true;
 
-        // Update status string
-        apc_hid_format_status(&target->status, target->status_string,
-                             sizeof(target->status_string));
+        // Update status string only when status path is confirmed.
+        if (strcmp(target->status_confidence, "confirmed") == 0) {
+            apc_hid_format_status(&target->status, target->status_string,
+                                 sizeof(target->status_string));
+        } else {
+            strlcpy(target->status_string, "UNKNOWN", sizeof(target->status_string));
+        }
 
         ESP_LOGI(TAG, "✅ METRICS UPDATED");
         ESP_LOGI(TAG, "   Status: %s", target->status_string);
@@ -671,7 +684,26 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
         ESP_LOGI(TAG, "═══════════════════════════════════════════");
     }
 
+    /* v0.4: Unlock metrics if we locked them */
+    if (use_lock && metrics_mutex != NULL) {
+        xSemaphoreGive(metrics_mutex);
+    }
+
     return updated;
+}
+
+/* v0.4: Atomic snapshot for MQTT/HTTP readers */
+ups_metrics_t apc_hid_get_metrics_snapshot(void)
+{
+    ups_metrics_t snapshot = {0};
+    if (metrics_mutex != NULL) {
+        xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(100));
+    }
+    memcpy(&snapshot, &current_metrics, sizeof(ups_metrics_t));
+    if (metrics_mutex != NULL) {
+        xSemaphoreGive(metrics_mutex);
+    }
+    return snapshot;
 }
 
 const ups_metrics_t* apc_hid_get_metrics(void)

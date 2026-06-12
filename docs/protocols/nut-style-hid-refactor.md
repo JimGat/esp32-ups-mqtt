@@ -396,3 +396,16 @@ These are accepted requirements for the v0.4 refactor:
    - Claude Code is likely the right worker for the rewrite.
    - Do not start Claude with an open-ended rewrite prompt.
    - First Claude scope should be bounded to transport counters, atomic snapshots, confidence gating, Web UI adjustments, and static NUT-style mapping scaffolding.
+
+## v0.4.1-dev scaffold implementation note
+
+The first implementation pass adds a static NUT-style mapping/provenance scaffold (`main/ups_hid_map.*`) and transport health counters. It does not implement a dynamic HID descriptor parser yet.
+
+Important runtime behavior:
+
+- SMT2200 report `0x09` is retained only as an unmapped raw status candidate. It no longer drives canonical `OL`, `OB`, `CHRG`, or `DISCHRG` because pull-test evidence showed it remained unchanged during transfer.
+- Canonical UPS status remains `UNKNOWN` unless a confirmed status path sets `status_confidence=confirmed`.
+- MQTT publishes `UNKNOWN` for status when status confidence is not confirmed and logs a `DATA_QUALITY` warning instead of publishing guessed state.
+- HTTP `/status` and `/metrics` read atomic metric snapshots and expose active profile, status confidence, transport health, and last poll age.
+- Linux/NUT baseline capture is still required before promoting SMT2200 status paths from unmapped/likely to confirmed.
+

@@ -891,13 +891,13 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "</div>"
         "<button type='submit'>Apply Debug Mode</button></form>"
         "<form method='POST' action='/api/usb-debug/descriptor'><button type='submit'>Dump HID Report Descriptor</button></form>"
-        "<form method='POST' action='/api/usb-debug/request'>"
+        "<form method='POST' action='/api/usb-debug/request-safe'>"
         "<label>Report Type (1=input, 2=output, 3=feature)</label><input name='type' value='3'>"
         "<label>Report ID (hex OK, e.g. 0x0D)</label><input name='id' value='0x0D'>"
         "<label>Length</label><input name='len' value='64'>"
-        "<button type='submit'>GET_REPORT</button></form>"
+        "<button type='submit'>Safe GET_REPORT</button><small> Uses descriptor-sized guarded reads; raw endpoint remains /api/usb-debug/request.</small></form>"
         "<form method='POST' action='/api/usb-debug/clear'><button type='submit'>Clear Debug Capture</button></form>"
-        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a></p>"
+        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a> | <a href='/api/usb-debug/records.json'>Records JSON</a></p>"
         "<pre id='dbg'>Loading...</pre>"
         "<script>async function poll(){try{let s=await fetch('/api/usb-debug');let r=await fetch('/api/usb-debug/records');document.getElementById('dbg').textContent=await s.text()+'\\n\\n'+await r.text();}catch(e){document.getElementById('dbg').textContent=e;}setTimeout(poll,2000);}poll();</script>"
         "</div>");
@@ -920,11 +920,21 @@ static esp_err_t usb_debug_state_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, buf);
 }
 
+static uint32_t get_query_u32(httpd_req_t *req, const char *key, uint32_t def)
+{
+    char query[128];
+    char val[32];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return def;
+    if (httpd_query_key_value(query, key, val, sizeof(val)) != ESP_OK) return def;
+    return (uint32_t)parse_u32_auto(val);
+}
+
 static esp_err_t usb_debug_records_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
-    usb_debug_record_t recs[32];
-    size_t n = usb_debug_get_records(recs, 32, 0);
+    uint32_t since = get_query_u32(req, "since", 0);
+    usb_debug_record_t recs[48];
+    size_t n = usb_debug_get_records(recs, 48, since);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     char line[640];
@@ -935,6 +945,42 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
         snprintf(line, sizeof(line), "%lu %lldms type=%d report=0x%02X status=%u len=%u note=%s data=%s\n", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms, recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, recs[i].note, hex);
         httpd_resp_sendstr_chunk(req, line);
     }
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t usb_debug_records_json_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    uint32_t since = get_query_u32(req, "since", 0);
+    usb_debug_record_t recs[48];
+    size_t n = usb_debug_get_records(recs, 48, since);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_sendstr_chunk(req, "[\n");
+    char line[760];
+    for (size_t i = 0; i < n; i++) {
+        char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1] = {0};
+        int pos = 0;
+        size_t data_len = recs[i].length > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : recs[i].length;
+        for (size_t b = 0; b < data_len && pos < (int)sizeof(hex) - 4; b++) {
+            pos += snprintf(hex + pos, sizeof(hex) - pos, "%s%02X", b ? " " : "", recs[i].data[b]);
+        }
+        // Notes are controlled firmware strings; keep them short and replace quotes defensively.
+        char note[96];
+        size_t ni = 0;
+        for (size_t j = 0; recs[i].note[j] && ni < sizeof(note) - 1; j++) {
+            note[ni++] = (recs[i].note[j] == '"' || recs[i].note[j] == '\\') ? '_' : recs[i].note[j];
+        }
+        note[ni] = 0;
+        snprintf(line, sizeof(line),
+            "%s{\"seq\":%lu,\"timestamp_ms\":%lld,\"type\":%d,\"report_id\":%u,\"report_hex\":\"0x%02X\",\"status\":%u,\"len\":%u,\"note\":\"%s\",\"data\":\"%s\"}%s\n",
+            i ? "," : "", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms,
+            recs[i].type, recs[i].report_id, recs[i].report_id, recs[i].status,
+            recs[i].length, note, hex, "");
+        httpd_resp_sendstr_chunk(req, line);
+    }
+    httpd_resp_sendstr_chunk(req, "]");
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
@@ -966,7 +1012,7 @@ static esp_err_t usb_debug_descriptor_handler(httpd_req_t *req)
     httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
 }
 
-static esp_err_t usb_debug_request_handler(httpd_req_t *req)
+static esp_err_t usb_debug_request_common_handler(httpd_req_t *req, bool safe)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     char body[256], val[32];
@@ -975,9 +1021,19 @@ static esp_err_t usb_debug_request_handler(httpd_req_t *req)
     if (get_form_value(body, "type", val, sizeof(val))) type = (uint8_t)parse_u32_auto(val);
     if (get_form_value(body, "id", val, sizeof(val))) id = (uint8_t)parse_u32_auto(val);
     if (get_form_value(body, "len", val, sizeof(val))) len = (uint16_t)parse_u32_auto(val);
-    esp_err_t err = usb_debug_request_report(type, id, len);
+    esp_err_t err = safe ? usb_debug_request_report_safe(type, id, len) : usb_debug_request_report(type, id, len);
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
     httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+}
+
+static esp_err_t usb_debug_request_handler(httpd_req_t *req)
+{
+    return usb_debug_request_common_handler(req, false);
+}
+
+static esp_err_t usb_debug_request_safe_handler(httpd_req_t *req)
+{
+    return usb_debug_request_common_handler(req, true);
 }
 
 static esp_err_t usb_debug_clear_handler(httpd_req_t *req)
@@ -1021,9 +1077,11 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t usb_debug_page_uri = { .uri = "/usb-debug", .method = HTTP_GET, .handler = usb_debug_page_handler };
     const httpd_uri_t usb_debug_state_uri = { .uri = "/api/usb-debug", .method = HTTP_GET, .handler = usb_debug_state_handler };
     const httpd_uri_t usb_debug_records_uri = { .uri = "/api/usb-debug/records", .method = HTTP_GET, .handler = usb_debug_records_handler };
+    const httpd_uri_t usb_debug_records_json_uri = { .uri = "/api/usb-debug/records.json", .method = HTTP_GET, .handler = usb_debug_records_json_handler };
     const httpd_uri_t usb_debug_config_uri = { .uri = "/api/usb-debug/config", .method = HTTP_POST, .handler = usb_debug_config_handler };
     const httpd_uri_t usb_debug_descriptor_uri = { .uri = "/api/usb-debug/descriptor", .method = HTTP_POST, .handler = usb_debug_descriptor_handler };
     const httpd_uri_t usb_debug_request_uri = { .uri = "/api/usb-debug/request", .method = HTTP_POST, .handler = usb_debug_request_handler };
+    const httpd_uri_t usb_debug_request_safe_uri = { .uri = "/api/usb-debug/request-safe", .method = HTTP_POST, .handler = usb_debug_request_safe_handler };
     const httpd_uri_t usb_debug_clear_uri = { .uri = "/api/usb-debug/clear", .method = HTTP_POST, .handler = usb_debug_clear_handler };
 
     httpd_register_uri_handler(server, &root_uri);
@@ -1035,9 +1093,11 @@ esp_err_t http_server_start(app_config_t *config)
     httpd_register_uri_handler(server, &usb_debug_page_uri);
     httpd_register_uri_handler(server, &usb_debug_state_uri);
     httpd_register_uri_handler(server, &usb_debug_records_uri);
+    httpd_register_uri_handler(server, &usb_debug_records_json_uri);
     httpd_register_uri_handler(server, &usb_debug_config_uri);
     httpd_register_uri_handler(server, &usb_debug_descriptor_uri);
     httpd_register_uri_handler(server, &usb_debug_request_uri);
+    httpd_register_uri_handler(server, &usb_debug_request_safe_uri);
     httpd_register_uri_handler(server, &usb_debug_clear_uri);
 
     /* OTA & system management endpoints */

@@ -280,6 +280,49 @@ static uint32_t debug_next_seq = 1;
 static size_t debug_head = 0;
 static size_t debug_count = 0;
 
+
+static void usb_debug_reset_command_queue(void)
+{
+    if (debug_cmd_queue != NULL) {
+        xQueueReset(debug_cmd_queue);
+    }
+}
+
+// Guard manual GET_REPORT lengths. The ESP32 debug UI is for discovery, but
+// unsupported reports on slow UPS controllers can wedge if probed with large
+// arbitrary lengths. These sizes include the report ID byte and are derived
+// from the SMT2200 HID descriptor plus confirmed samples. Unknown reports get
+// a conservative tiny read; vendor reports keep their descriptor lengths.
+uint16_t usb_debug_safe_report_length(uint8_t report_id, uint16_t requested_length)
+{
+    uint16_t safe = 3;
+    switch (report_id) {
+        case 0x01: case 0x02: case 0x03: case 0x04: case 0x05:
+        case 0x0C: case 0x0E: case 0x0F: case 0x10: case 0x11:
+        case 0x14:
+            safe = 2;
+            break;
+        case 0x06: case 0x08: case 0x09: case 0x0A: case 0x0B:
+        case 0x0D: case 0x12:
+        case 0x8D: case 0x8E: case 0x92: case 0x93: case 0x94:
+            safe = 3;
+            break;
+        case 0x13:
+            safe = 4;
+            break;
+        case 0x89: case 0x90: case 0x96:
+            safe = 64;
+            break;
+        default:
+            safe = 3;
+            break;
+    }
+    if (requested_length > 0 && requested_length < safe) {
+        return requested_length;
+    }
+    return safe;
+}
+
 //══════════════════════════════════════════════════════════════════════════════
 // HID (Human Interface Device) CONFIGURATION
 //══════════════════════════════════════════════════════════════════════════════
@@ -347,6 +390,7 @@ esp_err_t usb_debug_set_config(const usb_debug_config_t *cfg)
     if (cfg->mode > USB_DEBUG_MODE_ACTIVE) return ESP_ERR_INVALID_ARG;
 
     if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    usb_debug_mode_t old_mode = debug_cfg.mode;
     debug_cfg = *cfg;
     if (debug_cfg.mode == USB_DEBUG_MODE_OFF) {
         debug_cfg.capture_interrupt_reports = false;
@@ -354,6 +398,10 @@ esp_err_t usb_debug_set_config(const usb_debug_config_t *cfg)
     }
     debug_state.mode = debug_cfg.mode;
     xSemaphoreGive(debug_mutex);
+
+    if (old_mode != debug_cfg.mode || debug_cfg.mode == USB_DEBUG_MODE_OFF) {
+        usb_debug_reset_command_queue();
+    }
 
     char note[48];
     snprintf(note, sizeof(note), "mode=%s", usb_debug_mode_name(cfg->mode));
@@ -414,6 +462,7 @@ void usb_debug_clear_records(void)
         debug_state.dropped_records = 0;
         xSemaphoreGive(debug_mutex);
     }
+    usb_debug_reset_command_queue();
 }
 
 esp_err_t usb_debug_request_descriptor(void)
@@ -428,24 +477,36 @@ esp_err_t usb_debug_request_descriptor(void)
     return ESP_ERR_TIMEOUT;
 }
 
-esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length)
+static esp_err_t usb_debug_request_report_internal(uint8_t report_type, uint8_t report_id, uint16_t length, bool safe)
 {
     if (debug_cmd_queue == NULL) return ESP_ERR_INVALID_STATE;
     if (report_type < 1 || report_type > 3 || length == 0 || length > 128) return ESP_ERR_INVALID_ARG;
+    uint16_t req_len = safe ? usb_debug_safe_report_length(report_id, length) : length;
+    if (req_len == 0 || req_len > 128) return ESP_ERR_INVALID_ARG;
     usb_debug_cmd_t cmd = {
         .type = USB_DEBUG_CMD_GET_REPORT,
         .report_type = report_type,
         .report_id = report_id,
-        .length = length,
+        .length = req_len,
     };
     if (xQueueSend(debug_cmd_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
-        char note[48];
-        snprintf(note, sizeof(note), "GET_REPORT type=%u queued", report_type);
+        char note[64];
+        snprintf(note, sizeof(note), "GET_REPORT type=%u queued len=%u%s", report_type, req_len, safe ? " safe" : "");
         usb_debug_record_add(USB_DEBUG_REC_EVENT, report_id, 0, NULL, 0, note);
         return ESP_OK;
     }
     usb_debug_record_add(USB_DEBUG_REC_ERROR, report_id, 7, NULL, 0, "GET_REPORT queue full");
     return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length)
+{
+    return usb_debug_request_report_internal(report_type, report_id, length, false);
+}
+
+esp_err_t usb_debug_request_report_safe(uint8_t report_type, uint8_t report_id, uint16_t requested_length)
+{
+    return usb_debug_request_report_internal(report_type, report_id, requested_length, true);
 }
 
 // USB Host client event handler

@@ -206,3 +206,14 @@ SMT2200 report `0x09` online sample `09 A8 4A` sets bits `3, 5, 7, 9, 11, 14`. E
 ### v0.3.26-dev status calibration note
 
 Jim confirmed the physical SMT2200 state for online sample `09 A8 4A`: the unit was online, charging, carrying about 14% load, not overloaded, and did not need battery replacement. Therefore v0.3.26-dev treats bit 3 as `OL` and bit 5 as `CHRG`. Bits 7 and 11 remain unassigned for this model and must not be rendered as `OVER` or `RB` from this sample.
+
+## v0.3.29 USB Debug Safe Enumeration Notes
+
+The USB debug API now has a safer manual request path for protocol discovery:
+
+- `POST /api/usb-debug/request-safe` accepts the same form fields as `/api/usb-debug/request` (`type`, `id`, `len`) but clamps the requested length to descriptor-derived safe sizes for known SMT2200 report IDs. This avoids probing tiny reports with 64-byte reads, which can stall or re-enumerate slow UPS USB controllers.
+- `GET /api/usb-debug/records?since=<seq>` returns plain text records after a sequence number.
+- `GET /api/usb-debug/records.json?since=<seq>` returns the same records as JSON for automation.
+- Changing debug mode or clearing records resets the pending debug command queue so stale commands from a failed sweep do not execute later.
+
+Use `request-safe` for automated enumeration. Reserve raw `/api/usb-debug/request` for one-off low-level USB experiments where the caller deliberately controls the exact transfer length.

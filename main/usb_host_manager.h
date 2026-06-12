@@ -65,6 +65,8 @@ void usb_debug_get_state(usb_debug_state_t *state);
 size_t usb_debug_get_records(usb_debug_record_t *out, size_t max_records, uint32_t since_seq);
 void usb_debug_clear_records(void);
 esp_err_t usb_debug_request_descriptor(void);
+uint16_t usb_debug_safe_report_length(uint8_t report_id, uint16_t requested_length);
 esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length);
+esp_err_t usb_debug_request_report_safe(uint8_t report_type, uint8_t report_id, uint16_t requested_length);
 
 #endif // USB_HOST_MANAGER_H

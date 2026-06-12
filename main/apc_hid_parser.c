@@ -233,12 +233,12 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
 
         case 0x0B:  // Voltage/config-like value
             if (is_smt2200_profile()) {
-                ESP_LOGI(TAG, "   Type: SMT2200 Voltage-like Report 0x0B");
+                ESP_LOGI(TAG, "   Type: SMT2200 Voltage-like Report 0x0B (diagnostic only)");
                 if (length >= 3) {
                     uint16_t raw = data[1] | (data[2] << 8);
-                    target->battery_nominal_voltage = (float)raw / 100.0f;  // scale pending, confirmed sample 0x154A=5450
-                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.2fV (scale/meaning pending)", raw, target->battery_nominal_voltage);
-                    updated = true;
+                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X -> candidate %.2fV, NOT publishing until transport/protocol confirmed",
+                             raw, (float)raw / 100.0f);
+                    // Do not update metrics from this unconfirmed SMT2200 voltage-like report.
                 }
             } else {
                 ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
@@ -250,37 +250,22 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0D:  // Battery voltage (interrupt endpoint)
-            // APC SMT2200 HID quirk: Report 0x0D has been observed in multiple scales:
-            //   0D 54 15 -> 0x1554 / 100 = 54.60V pack voltage
-            //   0D 1C 02 -> 0x021C / 10  = 54.00V pack voltage
-            //   0D B0 04 -> 0x04B0 / 100 = 12.00V per 12V block; SMT2200 has 4 blocks in series => 48.00V pack
-            // Normalize to full 48V pack voltage and ignore implausible outliers instead of poisoning MQTT.
-            ESP_LOGI(TAG, "   Type: Battery Voltage (interrupt)");
-            if (length >= 3) {
-                uint16_t voltage_raw = data[1] | (data[2] << 8);
-                float voltage = (float)voltage_raw / 100.0f;
-
-                if (voltage >= 10.0f && voltage <= 16.0f) {
-                    voltage *= 4.0f;
-                    target->battery_voltage = voltage;
-                    ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 100 × 4 blocks)", target->battery_voltage, voltage_raw);
+        case 0x0D:  // SMT2200 voltage-like report -- diagnostic only until transport/protocol is proven
+            if (is_smt2200_profile()) {
+                ESP_LOGI(TAG, "   Type: SMT2200 Report 0x0D (diagnostic only)");
+                if (length >= 3) {
+                    uint16_t raw = data[1] | (data[2] << 8);
+                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X -> /100 %.2fV, /10 %.2fV; NOT publishing",
+                             raw, (float)raw / 100.0f, (float)raw / 10.0f);
+                    // Do not update battery_voltage from 0x0D on SMT2200 until communication/protocol is confirmed.
+                }
+            } else {
+                ESP_LOGI(TAG, "   Type: Battery Voltage (generic APC)");
+                if (length >= 3) {
+                    uint16_t voltage_raw = data[1] | (data[2] << 8);
+                    target->battery_voltage = (float)voltage_raw / 100.0f;
+                    ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
                     updated = true;
-                } else if (voltage_raw < 1000) {
-                    voltage = (float)voltage_raw / 10.0f;
-                    if (voltage >= 36.0f && voltage <= 65.0f) {
-                        target->battery_voltage = voltage;
-                        ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 10) [decivolt quirk]", target->battery_voltage, voltage_raw);
-                        updated = true;
-                    } else {
-                        ESP_LOGW(TAG, "   └─ Ignoring implausible battery voltage %.2fV from raw 0x%04X", voltage, voltage_raw);
-                    }
-                } else if (voltage >= 36.0f && voltage <= 65.0f) {
-                    target->battery_voltage = voltage;
-                    ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 100)", target->battery_voltage, voltage_raw);
-                    updated = true;
-                } else {
-                    ESP_LOGW(TAG, "   └─ Ignoring implausible battery voltage %.2fV from raw 0x%04X", voltage, voltage_raw);
                 }
             }
             break;

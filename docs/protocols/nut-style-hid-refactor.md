@@ -490,3 +490,16 @@ Started implementation of the new dynamic direction with a host-tested `nut_runt
 ## v0.4.8-dev HID/NUT map endpoint
 
 Added `/api/hid-map` to expose the latest descriptor-derived runtime semantic map as JSON. The descriptor callback stores the runtime map snapshot and already logs each `NUT-MAP` entry to the serial console. This endpoint is the preferred next diagnostic surface after a descriptor dump: it separates descriptor-derived semantics from raw debug records and makes firmware/model variation visible without relying on fixed report-ID tables.
+
+## v0.4.9-dev descriptor-first isolation mode
+
+Jim redirected the architecture: stop normal telemetry polling and MQTT reporting until descriptor capture and runtime map generation are solid. The bridge should now treat descriptor discovery as the first USB action after claim. Only after a reliable descriptor-derived NUT map exists should normal polling and MQTT transmit be wired back in. This prevents old guessed report polling from competing with or obscuring descriptor work.
+
+Descriptor-first isolation rules for this phase:
+
+- Keep Wi-Fi, HTTP, OTA, serial logging, and USB host alive.
+- Do not initialize MQTT, publish Home Assistant discovery, publish telemetry, or run power-event reporting tasks.
+- Do not run normal periodic GET_REPORT telemetry polling.
+- Automatically queue a HID report descriptor request immediately after the APC HID interface is claimed.
+- Allow descriptor commands to run even when Active Debug mode is not manually enabled.
+- Use `/api/hid-map`, serial `NUT-MAP` logs, and debug records as the primary validation surfaces.

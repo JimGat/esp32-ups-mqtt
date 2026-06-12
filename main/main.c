@@ -390,11 +390,10 @@ void app_main(void)
     ESP_LOGI(TAG, "🌐 Starting HTTP server...");
     ESP_ERROR_CHECK(http_server_start(&app_config));
 
-    // Initialize MQTT
-    ESP_LOGI(TAG, "📡 Initializing MQTT...");
-    mqtt_set_device_model(ups_profile_name(ups_profile_validate(app_config.ups_profile)));
-    ESP_ERROR_CHECK(mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass, app_config.device_label));
-    ESP_LOGI(TAG, "DEBUG: MQTT init complete");
+    // v0.4.9 descriptor-first isolation mode: keep network/HTTP/OTA alive, but
+    // do not initialize MQTT or publish discovery/telemetry until the dynamic
+    // descriptor-derived NUT map is reliable.
+    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: MQTT initialization disabled; no discovery or telemetry will be published");
 
     // Initialize USB Host
     ESP_LOGI(TAG, "DEBUG: About to init USB Host");
@@ -411,10 +410,7 @@ void app_main(void)
         xTaskCreate(simulate_ups_data_task, "simulate_ups", 2048, NULL, 3, NULL);
     }
 
-    ESP_LOGI(TAG, "DEBUG: USB setup complete, creating MQTT publish task");
-    // Create MQTT publish task
-    xTaskCreate(mqtt_publish_task, "mqtt_publish", 4096, NULL, 4, NULL);
-    xTaskCreate(power_event_task, "power_event", 4096, NULL, 5, NULL);
+    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: MQTT publish and power-event tasks disabled");
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

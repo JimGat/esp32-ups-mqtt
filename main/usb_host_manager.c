@@ -95,6 +95,8 @@ static nut_runtime_map_entry_t runtime_map_snapshot[32];
 static size_t runtime_map_count = 0;
 static uint32_t runtime_map_version = 0;
 static uint16_t runtime_map_descriptor_len = 0;
+static bool descriptor_first_report_requested = false;
+static bool descriptor_first_poll_suppressed_logged = false;
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
@@ -621,6 +623,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 
                 ups_device = dev_hdl;
                 ups_connected = true;
+                descriptor_first_report_requested = false;
+                descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record connection event */
                 ups_transport_stats_record_connected();
 
@@ -631,6 +635,13 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
                     usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "interface claimed");
+                    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: auto-queue HID report descriptor before any telemetry polling");
+                    esp_err_t desc_err = usb_debug_request_descriptor();
+                    if (desc_err == ESP_OK) {
+                        descriptor_first_report_requested = true;
+                    } else {
+                        ESP_LOGW(TAG, "DESCRIPTOR_FIRST: descriptor queue failed: %s", esp_err_to_name(desc_err));
+                    }
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)
@@ -671,6 +682,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
             if (event_msg->dev_gone.dev_hdl == ups_device) {
                 ups_connected = false;
                 ups_device = NULL;
+                descriptor_first_report_requested = false;
+                descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record disconnection event */
                 ups_transport_stats_record_disconnected();
                 ESP_LOGI(TAG, "❌ APC UPS disconnected");
@@ -1053,7 +1066,7 @@ static void usb_debug_process_commands(void)
     while (xQueueReceive(debug_cmd_queue, &cmd, 0) == pdTRUE) {
         usb_debug_config_t cfg;
         usb_debug_get_config(&cfg);
-        if (cfg.mode != USB_DEBUG_MODE_ACTIVE) {
+        if (cmd.type != USB_DEBUG_CMD_DESCRIPTOR && cfg.mode != USB_DEBUG_MODE_ACTIVE) {
             usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 0, NULL, 0, "debug inactive");
             continue;
         }
@@ -1223,6 +1236,15 @@ void usb_host_task(void *arg)
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
+
+            // v0.4.9 descriptor-first isolation mode: do not run normal report
+            // polling until descriptor-derived runtime mapping is made reliable.
+            if (!descriptor_first_poll_suppressed_logged) {
+                ESP_LOGW(TAG, "DESCRIPTOR_FIRST: normal GET_REPORT polling suppressed; waiting on descriptor/NUT map workflow");
+                descriptor_first_poll_suppressed_logged = true;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
 
             // TRANSPORT STABILIZATION MODE (v0.3.39-dev):
             // Disable one-shot interrupt-IN polling. The previous pattern allocated and

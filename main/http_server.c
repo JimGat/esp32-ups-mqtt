@@ -1045,6 +1045,17 @@ static esp_err_t usb_debug_config_handler(httpd_req_t *req)
 static esp_err_t usb_debug_descriptor_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
+
+    usb_debug_config_t cfg;
+    usb_debug_get_config(&cfg);
+    if (cfg.mode != USB_DEBUG_MODE_ACTIVE) {
+        cfg.mode = USB_DEBUG_MODE_ACTIVE;
+        esp_err_t cfg_err = usb_debug_set_config(&cfg);
+        if (cfg_err != ESP_OK) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(cfg_err));
+        }
+    }
+
     esp_err_t err = usb_debug_request_descriptor();
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");

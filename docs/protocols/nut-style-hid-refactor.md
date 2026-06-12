@@ -416,3 +416,7 @@ This pass adds a small host-tested HID report descriptor parser (`main/hid_descr
 When a HID report descriptor is dumped through USB Debug mode, firmware now parses the payload-only descriptor and logs NUT-relevant fields such as `UPS.PowerSummary.PresentStatus.*`, `UPS.PowerSummary.RemainingCapacity`, `UPS.Input.Voltage`, and `UPS.Battery.Voltage` with report ID/bit offset/size provenance. It also records concise `field ...` events in the USB debug ring.
 
 This is detection/provenance only: SMT2200 canonical status still remains `UNKNOWN` until a descriptor-resolved status field is validated against Linux/NUT and/or a controlled pull test.
+
+## v0.4.3-dev USB debug descriptor UX fix
+
+The HID descriptor dump button now switches the runtime USB debug mode to Active Debug before queuing the descriptor command. The previous `v0.4.2-dev` UI let the browser queue a descriptor dump while the firmware was still in Normal Bridge mode if the user changed the dropdown but did not click `Apply Debug Mode` first. That produced `descriptor queued` followed by `debug inactive` and no descriptor transfer.

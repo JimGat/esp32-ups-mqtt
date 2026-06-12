@@ -125,6 +125,12 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
 
                 ESP_LOGI(TAG, "   └─ Result: Battery %.0f%%, Runtime %.0fs",
                          target->battery_charge, target->battery_runtime);
+                
+                // Derive low battery from actual charge % (APC standard is <20%)
+                // This must happen here, AFTER battery_charge is updated, because 
+                // Report 0x09 (Status) is parsed before 0x0C and wouldn't have the charge value yet.
+                target->status.low_battery = (target->battery_charge < 20.0f);
+                
                 updated = true;
             }
             break;
@@ -191,9 +197,8 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
                     target->status.online = input_power_present && !input_power_fail;
                     target->status.charging = charging;
                     target->status.discharging = discharging || input_power_fail;
-                    // Derive low battery from actual charge % (APC standard is <20%), 
-                    // as HID Bit 3 is unreliable and triggers even at 100% charge.
-                    target->status.low_battery = (target->battery_charge < 20.0f);
+                    // Do NOT set low_battery here. It will be correctly derived in the 0x0C 
+                    // handler after the actual battery_charge value is known.
                     
                     strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
                     

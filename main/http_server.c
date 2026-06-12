@@ -933,11 +933,11 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     uint32_t since = get_query_u32(req, "since", 0);
-    usb_debug_record_t recs[48];
-    size_t n = usb_debug_get_records(recs, 48, since);
+    usb_debug_record_t recs[16];
+    size_t n = usb_debug_get_records(recs, 16, since);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-    char line[640];
+    char line[384];
     for (size_t i = 0; i < n; i++) {
         char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1] = {0}; int pos = 0;
         size_t data_len = recs[i].length > USB_DEBUG_MAX_RECORD_DATA ? USB_DEBUG_MAX_RECORD_DATA : recs[i].length;
@@ -953,12 +953,12 @@ static esp_err_t usb_debug_records_json_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     uint32_t since = get_query_u32(req, "since", 0);
-    usb_debug_record_t recs[48];
-    size_t n = usb_debug_get_records(recs, 48, since);
+    usb_debug_record_t recs[16];
+    size_t n = usb_debug_get_records(recs, 16, since);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_sendstr_chunk(req, "[\n");
-    char line[760];
+    char line[384];
     for (size_t i = 0; i < n; i++) {
         char hex[USB_DEBUG_MAX_RECORD_DATA * 3 + 1] = {0};
         int pos = 0;
@@ -974,10 +974,9 @@ static esp_err_t usb_debug_records_json_handler(httpd_req_t *req)
         }
         note[ni] = 0;
         snprintf(line, sizeof(line),
-            "%s{\"seq\":%lu,\"timestamp_ms\":%lld,\"type\":%d,\"report_id\":%u,\"report_hex\":\"0x%02X\",\"status\":%u,\"len\":%u,\"note\":\"%s\",\"data\":\"%s\"}%s\n",
+            "%s{\"seq\":%lu,\"ms\":%lld,\"type\":%d,\"report\":\"0x%02X\",\"status\":%u,\"len\":%u,\"note\":\"%s\",\"data\":\"%s\"}\n",
             i ? "," : "", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms,
-            recs[i].type, recs[i].report_id, recs[i].report_id, recs[i].status,
-            recs[i].length, note, hex, "");
+            recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, note, hex);
         httpd_resp_sendstr_chunk(req, line);
     }
     httpd_resp_sendstr_chunk(req, "]");

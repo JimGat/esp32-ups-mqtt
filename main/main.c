@@ -411,10 +411,7 @@ void app_main(void)
         xTaskCreate(simulate_ups_data_task, "simulate_ups", 2048, NULL, 3, NULL);
     }
 
-    ESP_LOGI(TAG, "DEBUG: USB setup complete, creating MQTT publish task");
-    // Create MQTT publish task
-    xTaskCreate(mqtt_publish_task, "mqtt_publish", 4096, NULL, 4, NULL);
-    xTaskCreate(power_event_task, "power_event", 4096, NULL, 5, NULL);
+    ESP_LOGW(TAG, "STRICT_MODE: MQTT publish and power-event tasks disabled. USB task will only fetch descriptor.");
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

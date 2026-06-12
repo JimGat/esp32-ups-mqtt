@@ -486,3 +486,15 @@ This replaces raw report-ID guessing. Reports like `0x05`, `0x09`, `0x12`, and `
 ## v0.4.7-dev runtime NUT map scaffold
 
 Started implementation of the new dynamic direction with a host-tested `nut_runtime_map` module. It converts descriptor-resolved HID fields into semantic NUT runtime map entries such as `battery.charge`, `input.voltage`, and `ups.status.acpresent`, preserving report type, report ID, bit offset, bit size, logical range, unit exponent, source, and confidence. It also includes a conservative status composer that returns `UNKNOWN` unless descriptor-confirmed status sources have live values. The descriptor dump callback now builds and logs a runtime semantic map from parsed descriptor fields; this is evidence/provenance only and does not yet change MQTT status publishing.
+
+## v0.4.14-dev: Strict Descriptor-First Discovery Mode
+
+Per user directive: 'We can\'t use normal polling! ... All I want this code to do at this point is output a proper HID Descriptor Query.'
+
+This build enforces a strict state machine:
+1. USB callback detects device, claims interface, and sets `descriptor_needed = true`. ZERO blocking work.
+2. USB task calls `usb_host_client_handle_events`, then checks the flag. If true, it safely submits the GET_DESCRIPTOR transfer from task context.
+3. Transfer callback receives the descriptor, hex-dumps it to serial, and sets `descriptor_complete = true`.
+4. **Telemetry polling is entirely disabled/commented out.** The USB task will idle until the descriptor is complete.
+
+This eliminates all ESP-IDF USB context violations and provides a clean, isolated HID Report Descriptor hex dump for NUT-style mapping analysis.

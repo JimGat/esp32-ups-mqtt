@@ -90,6 +90,11 @@ static usb_debug_config_t debug_cfg = {
     .include_control_setup = false,
     .log_to_esp_log = false,
 };
+// v0.4.14 Strict descriptor-first mode state machine
+static volatile bool descriptor_needed = false;
+static volatile bool descriptor_requested = false;
+static volatile bool descriptor_complete = false;
+
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
@@ -594,7 +599,10 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 
                 ups_device = dev_hdl;
                 ups_connected = true;
-                /* v0.4: Record connection event */
+                descriptor_needed = true;
+                descriptor_requested = false;
+                descriptor_complete = false;
+                /* v0.4.14: Strict descriptor-first: flag only, no blocking in callback */
                 ups_transport_stats_record_connected();
 
                 // Claim HID interface FIRST (before inspecting)
@@ -644,6 +652,9 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
             if (event_msg->dev_gone.dev_hdl == ups_device) {
                 ups_connected = false;
                 ups_device = NULL;
+                descriptor_needed = false;
+                descriptor_requested = false;
+                descriptor_complete = false;
                 /* v0.4: Record disconnection event */
                 ups_transport_stats_record_disconnected();
                 ESP_LOGI(TAG, "❌ APC UPS disconnected");

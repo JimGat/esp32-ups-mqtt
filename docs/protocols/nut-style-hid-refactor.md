@@ -486,28 +486,3 @@ This replaces raw report-ID guessing. Reports like `0x05`, `0x09`, `0x12`, and `
 ## v0.4.7-dev runtime NUT map scaffold
 
 Started implementation of the new dynamic direction with a host-tested `nut_runtime_map` module. It converts descriptor-resolved HID fields into semantic NUT runtime map entries such as `battery.charge`, `input.voltage`, and `ups.status.acpresent`, preserving report type, report ID, bit offset, bit size, logical range, unit exponent, source, and confidence. It also includes a conservative status composer that returns `UNKNOWN` unless descriptor-confirmed status sources have live values. The descriptor dump callback now builds and logs a runtime semantic map from parsed descriptor fields; this is evidence/provenance only and does not yet change MQTT status publishing.
-
-## v0.4.8-dev HID/NUT map endpoint
-
-Added `/api/hid-map` to expose the latest descriptor-derived runtime semantic map as JSON. The descriptor callback stores the runtime map snapshot and already logs each `NUT-MAP` entry to the serial console. This endpoint is the preferred next diagnostic surface after a descriptor dump: it separates descriptor-derived semantics from raw debug records and makes firmware/model variation visible without relying on fixed report-ID tables.
-
-## v0.4.9-dev descriptor-first isolation mode
-
-Jim redirected the architecture: stop normal telemetry polling and MQTT reporting until descriptor capture and runtime map generation are solid. The bridge should now treat descriptor discovery as the first USB action after claim. Only after a reliable descriptor-derived NUT map exists should normal polling and MQTT transmit be wired back in. This prevents old guessed report polling from competing with or obscuring descriptor work.
-
-Descriptor-first isolation rules for this phase:
-
-- Keep Wi-Fi, HTTP, OTA, serial logging, and USB host alive.
-- Do not initialize MQTT, publish Home Assistant discovery, publish telemetry, or run power-event reporting tasks.
-- Do not run normal periodic GET_REPORT telemetry polling.
-- Automatically queue a HID report descriptor request immediately after the APC HID interface is claimed.
-- Allow descriptor commands to run even when Active Debug mode is not manually enabled.
-- Use `/api/hid-map`, serial `NUT-MAP` logs, and debug records as the primary validation surfaces.
-
-## v0.4.10-dev HID map endpoint hardening
-
-`/api/hid-map` must be a safe diagnostic endpoint even before descriptor capture succeeds. It now builds a small non-chunked JSON response and logs request/response metadata so route registration or handler failures are visible in serial logs. HTTP route registration also logs success/failure for each route to catch max-handler or duplicate-route problems explicitly.
-
-## v0.4.11-dev USB callback discipline fix
-
-Field logs showed USB attach eventually reached the callback, but no descriptor processing followed. The descriptor-first request path must not do queue/mutex work from `usb_host_client_event_cb`. The callback now only marks a pending descriptor request; the USB task queues the descriptor command from normal task context after `usb_host_client_handle_events()` returns. This follows the ESP-IDF USB Host context rule and makes descriptor request processing visible via serial logs.

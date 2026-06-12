@@ -4,7 +4,6 @@
 #include "wifi_manager.h"
 #include "ota_update.h"
 #include "ups_hid_map.h"
-#include "nut_runtime_map.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -937,7 +936,7 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "<label>Length</label><input name='len' value='64'>"
         "<button type='submit'>Safe GET_REPORT</button><small> Uses descriptor-sized guarded reads; raw endpoint remains /api/usb-debug/request.</small></form>"
         "<form method='POST' action='/api/usb-debug/clear'><button type='submit'>Clear Debug Capture</button></form>"
-        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a> | <a href='/api/usb-debug/records.json'>Records JSON</a> | <a href='/api/hid-map'>HID/NUT Map JSON</a></p>"
+        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a> | <a href='/api/usb-debug/records.json'>Records JSON</a></p>"
         "<pre id='dbg'>Loading...</pre>"
         "<script>async function poll(){try{let s=await fetch('/api/usb-debug');let r=await fetch('/api/usb-debug/records');document.getElementById('dbg').textContent=await s.text()+'\\n\\n'+await r.text();}catch(e){document.getElementById('dbg').textContent=e;}setTimeout(poll,2000);}poll();</script>"
         "</div>");
@@ -967,45 +966,6 @@ static uint32_t get_query_u32(httpd_req_t *req, const char *key, uint32_t def)
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return def;
     if (httpd_query_key_value(query, key, val, sizeof(val)) != ESP_OK) return def;
     return (uint32_t)parse_u32_auto(val);
-}
-
-static esp_err_t diagnostics_index_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-    return httpd_resp_sendstr(req, "UPS bridge diagnostic endpoints: /version /status /usb-debug /api/hid-map /api/usb-debug /api/usb-debug/records.json\n");
-}
-
-static esp_err_t hid_map_json_handler(httpd_req_t *req)
-{
-    if (!check_basic_auth(req)) return ESP_OK;
-    ESP_LOGI(TAG, "HID-MAP: request received");
-    nut_runtime_map_entry_t entries[16];
-    uint32_t version = 0;
-    uint16_t descriptor_len = 0;
-    size_t count = usb_debug_get_runtime_map(entries, 16, &version, &descriptor_len);
-
-    char body[4096];
-    size_t pos = 0;
-    int n = snprintf(body + pos, sizeof(body) - pos,
-                     "{\"version\":%lu,\"descriptor_len\":%u,\"count\":%u,\"entries\":[",
-                     (unsigned long)version, (unsigned)descriptor_len, (unsigned)count);
-    if (n < 0) n = 0;
-    pos += (size_t)n < sizeof(body) - pos ? (size_t)n : sizeof(body) - pos - 1;
-    for (size_t i = 0; i < count && pos < sizeof(body) - 4; i++) {
-        char entry_json[448];
-        nut_runtime_map_entry_to_json(&entries[i], entry_json, sizeof(entry_json));
-        n = snprintf(body + pos, sizeof(body) - pos, "%s%s", i ? "," : "", entry_json);
-        if (n < 0) n = 0;
-        pos += (size_t)n < sizeof(body) - pos ? (size_t)n : sizeof(body) - pos - 1;
-    }
-    snprintf(body + pos, sizeof(body) - pos, "]}");
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-    ESP_LOGI(TAG, "HID-MAP: returning version=%lu descriptor_len=%u count=%u",
-             (unsigned long)version, (unsigned)descriptor_len, (unsigned)count);
-    return httpd_resp_sendstr(req, body);
 }
 
 static esp_err_t usb_debug_records_handler(httpd_req_t *req)
@@ -1139,17 +1099,6 @@ static esp_err_t usb_debug_clear_handler(httpd_req_t *req)
 
 static httpd_handle_t server = NULL;
 
-
-static void register_uri_checked(httpd_handle_t server, const httpd_uri_t *uri, const char *name)
-{
-    esp_err_t err = httpd_register_uri_handler(server, uri);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP route registration failed for %s (%s): %s", name, uri->uri, esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "HTTP route registered: %s", uri->uri);
-    }
-}
-
 esp_err_t http_server_start(app_config_t *config)
 {
     current_config = config;
@@ -1163,7 +1112,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 24;
+    httpd_config.max_uri_handlers = 20;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -1172,7 +1121,6 @@ esp_err_t http_server_start(app_config_t *config)
     }
 
     const httpd_uri_t root_uri    = { .uri = "/",        .method = HTTP_GET,  .handler = root_handler    };
-    const httpd_uri_t index_uri   = { .uri = "/index.html", .method = HTTP_GET, .handler = root_handler };
     const httpd_uri_t status_uri  = { .uri = "/status",   .method = HTTP_GET,  .handler = status_handler  };
     const httpd_uri_t logs_uri    = { .uri = "/logs",     .method = HTTP_GET,  .handler = logs_handler    };
     const httpd_uri_t metrics_uri = { .uri = "/metrics",  .method = HTTP_GET,  .handler = metrics_handler };
@@ -1180,8 +1128,6 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
     const httpd_uri_t usb_debug_page_uri = { .uri = "/usb-debug", .method = HTTP_GET, .handler = usb_debug_page_handler };
     const httpd_uri_t usb_debug_state_uri = { .uri = "/api/usb-debug", .method = HTTP_GET, .handler = usb_debug_state_handler };
-    const httpd_uri_t hid_map_uri = { .uri = "/api/hid-map", .method = HTTP_GET, .handler = hid_map_json_handler };
-    const httpd_uri_t diag_uri = { .uri = "/diag", .method = HTTP_GET, .handler = diagnostics_index_handler };
     const httpd_uri_t usb_debug_records_uri = { .uri = "/api/usb-debug/records", .method = HTTP_GET, .handler = usb_debug_records_handler };
     const httpd_uri_t usb_debug_records_json_uri = { .uri = "/api/usb-debug/records.json", .method = HTTP_GET, .handler = usb_debug_records_json_handler };
     const httpd_uri_t usb_debug_config_uri = { .uri = "/api/usb-debug/config", .method = HTTP_POST, .handler = usb_debug_config_handler };
@@ -1190,24 +1136,21 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t usb_debug_request_safe_uri = { .uri = "/api/usb-debug/request-safe", .method = HTTP_POST, .handler = usb_debug_request_safe_handler };
     const httpd_uri_t usb_debug_clear_uri = { .uri = "/api/usb-debug/clear", .method = HTTP_POST, .handler = usb_debug_clear_handler };
 
-    register_uri_checked(server, &root_uri, "root");
-    register_uri_checked(server, &index_uri, "index");
-    register_uri_checked(server, &status_uri, "status");
-    register_uri_checked(server, &logs_uri, "logs");
-    register_uri_checked(server, &metrics_uri, "metrics");
-    register_uri_checked(server, &version_uri, "version");
-    register_uri_checked(server, &save_uri, "save");
-    register_uri_checked(server, &usb_debug_page_uri, "usb_debug_page");
-    register_uri_checked(server, &usb_debug_state_uri, "usb_debug_state");
-    register_uri_checked(server, &hid_map_uri, "hid_map");
-    register_uri_checked(server, &diag_uri, "diag");
-    register_uri_checked(server, &usb_debug_records_uri, "usb_debug_records");
-    register_uri_checked(server, &usb_debug_records_json_uri, "usb_debug_records_json");
-    register_uri_checked(server, &usb_debug_config_uri, "usb_debug_config");
-    register_uri_checked(server, &usb_debug_descriptor_uri, "usb_debug_descriptor");
-    register_uri_checked(server, &usb_debug_request_uri, "usb_debug_request");
-    register_uri_checked(server, &usb_debug_request_safe_uri, "usb_debug_request_safe");
-    register_uri_checked(server, &usb_debug_clear_uri, "usb_debug_clear");
+    httpd_register_uri_handler(server, &root_uri);
+    httpd_register_uri_handler(server, &status_uri);
+    httpd_register_uri_handler(server, &logs_uri);
+    httpd_register_uri_handler(server, &metrics_uri);
+    httpd_register_uri_handler(server, &version_uri);
+    httpd_register_uri_handler(server, &save_uri);
+    httpd_register_uri_handler(server, &usb_debug_page_uri);
+    httpd_register_uri_handler(server, &usb_debug_state_uri);
+    httpd_register_uri_handler(server, &usb_debug_records_uri);
+    httpd_register_uri_handler(server, &usb_debug_records_json_uri);
+    httpd_register_uri_handler(server, &usb_debug_config_uri);
+    httpd_register_uri_handler(server, &usb_debug_descriptor_uri);
+    httpd_register_uri_handler(server, &usb_debug_request_uri);
+    httpd_register_uri_handler(server, &usb_debug_request_safe_uri);
+    httpd_register_uri_handler(server, &usb_debug_clear_uri);
 
     /* OTA & system management endpoints */
     register_ota_handlers(server);

@@ -90,15 +90,6 @@ static usb_debug_config_t debug_cfg = {
     .include_control_setup = false,
     .log_to_esp_log = false,
 };
-static SemaphoreHandle_t debug_mutex = NULL;
-static nut_runtime_map_entry_t runtime_map_snapshot[32];
-static size_t runtime_map_count = 0;
-static uint32_t runtime_map_version = 0;
-static uint16_t runtime_map_descriptor_len = 0;
-static bool descriptor_first_report_requested = false;
-static volatile bool descriptor_first_descriptor_pending = false;
-static bool descriptor_first_poll_suppressed_logged = false;
-
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
@@ -148,13 +139,6 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             size_t runtime_count = nut_runtime_map_build(fields, field_count,
                                                          runtime_map, sizeof(runtime_map) / sizeof(runtime_map[0]));
             ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
-            if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                runtime_map_count = runtime_count;
-                memcpy(runtime_map_snapshot, runtime_map, runtime_count * sizeof(runtime_map_snapshot[0]));
-                runtime_map_descriptor_len = (uint16_t)payload_len;
-                runtime_map_version++;
-                xSemaphoreGive(debug_mutex);
-            }
             char map_summary[96];
             snprintf(map_summary, sizeof(map_summary), "nut runtime map entries=%u", (unsigned)runtime_count);
             usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, map_summary);
@@ -336,6 +320,7 @@ typedef struct {
 } usb_debug_cmd_t;
 
 static usb_debug_state_t debug_state = {0};
+static SemaphoreHandle_t debug_mutex = NULL;
 static QueueHandle_t debug_cmd_queue = NULL;
 static usb_debug_record_t debug_ring[USB_DEBUG_RING_SIZE];
 static uint32_t debug_next_seq = 1;
@@ -516,21 +501,6 @@ size_t usb_debug_get_records(usb_debug_record_t *out, size_t max_records, uint32
     return copied;
 }
 
-size_t usb_debug_get_runtime_map(nut_runtime_map_entry_t *out, size_t max_entries,
-                                 uint32_t *version, uint16_t *descriptor_len)
-{
-    if (version) *version = 0;
-    if (descriptor_len) *descriptor_len = 0;
-    if (out == NULL || max_entries == 0 || debug_mutex == NULL) return 0;
-    if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return 0;
-    size_t n = runtime_map_count < max_entries ? runtime_map_count : max_entries;
-    memcpy(out, runtime_map_snapshot, n * sizeof(out[0]));
-    if (version) *version = runtime_map_version;
-    if (descriptor_len) *descriptor_len = runtime_map_descriptor_len;
-    xSemaphoreGive(debug_mutex);
-    return n;
-}
-
 void usb_debug_clear_records(void)
 {
     if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -624,9 +594,6 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 
                 ups_device = dev_hdl;
                 ups_connected = true;
-                descriptor_first_report_requested = false;
-                descriptor_first_descriptor_pending = false;
-                descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record connection event */
                 ups_transport_stats_record_connected();
 
@@ -636,8 +603,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                     ESP_LOGE(TAG, "Failed to claim interface: %s", esp_err_to_name(err));
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
-                    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: HID interface claimed; descriptor request pending for USB task context");
-                    descriptor_first_descriptor_pending = true;
+                    usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "interface claimed");
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)
@@ -678,9 +644,6 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
             if (event_msg->dev_gone.dev_hdl == ups_device) {
                 ups_connected = false;
                 ups_device = NULL;
-                descriptor_first_report_requested = false;
-                descriptor_first_descriptor_pending = false;
-                descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record disconnection event */
                 ups_transport_stats_record_disconnected();
                 ESP_LOGI(TAG, "❌ APC UPS disconnected");
@@ -1063,7 +1026,7 @@ static void usb_debug_process_commands(void)
     while (xQueueReceive(debug_cmd_queue, &cmd, 0) == pdTRUE) {
         usb_debug_config_t cfg;
         usb_debug_get_config(&cfg);
-        if (cmd.type != USB_DEBUG_CMD_DESCRIPTOR && cfg.mode != USB_DEBUG_MODE_ACTIVE) {
+        if (cfg.mode != USB_DEBUG_MODE_ACTIVE) {
             usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 0, NULL, 0, "debug inactive");
             continue;
         }
@@ -1073,7 +1036,6 @@ static void usb_debug_process_commands(void)
         }
 
         if (cmd.type == USB_DEBUG_CMD_DESCRIPTOR) {
-            ESP_LOGW(TAG, "DESCRIPTOR_FIRST: processing queued HID report descriptor request");
             usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor processing");
             request_hid_report_descriptor(ups_device, HID_INTERFACE);
         } else if (cmd.type == USB_DEBUG_CMD_GET_REPORT) {
@@ -1185,7 +1147,7 @@ void usb_host_task(void *arg)
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {
-            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, descriptor_pending: %d, descriptor_queued: %d, map_version: %lu, map_count: %u", loop_count, ups_connected, descriptor_first_descriptor_pending, descriptor_first_report_requested, (unsigned long)runtime_map_version, (unsigned)runtime_map_count);
+            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d", loop_count, ups_connected);
         }
 
         // CRITICAL: Handle USB host LIBRARY events first (device connection/disconnection)
@@ -1224,17 +1186,6 @@ void usb_host_task(void *arg)
             ESP_LOGI(TAG, "DEBUG: USB client event received (not timeout)");
         }
 
-        if (ups_connected && ups_device != NULL && descriptor_first_descriptor_pending && !descriptor_first_report_requested) {
-            descriptor_first_descriptor_pending = false;
-            ESP_LOGW(TAG, "DESCRIPTOR_FIRST: queueing HID report descriptor from USB task context");
-            esp_err_t desc_err = usb_debug_request_descriptor();
-            if (desc_err == ESP_OK) {
-                descriptor_first_report_requested = true;
-            } else {
-                ESP_LOGW(TAG, "DESCRIPTOR_FIRST: descriptor queue failed in USB task: %s", esp_err_to_name(desc_err));
-            }
-        }
-
         // If UPS is connected, try to read HID reports.
         // Active debug mode is command-driven: skip normal interrupt reads/polls so
         // descriptor dumps and manual GET_REPORT requests never compete with bridge traffic.
@@ -1245,15 +1196,6 @@ void usb_host_task(void *arg)
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
-
-            // v0.4.9 descriptor-first isolation mode: do not run normal report
-            // polling until descriptor-derived runtime mapping is made reliable.
-            if (!descriptor_first_poll_suppressed_logged) {
-                ESP_LOGW(TAG, "DESCRIPTOR_FIRST: normal GET_REPORT polling suppressed; waiting on descriptor/NUT map workflow");
-                descriptor_first_poll_suppressed_logged = true;
-            }
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
 
             // TRANSPORT STABILIZATION MODE (v0.3.39-dev):
             // Disable one-shot interrupt-IN polling. The previous pattern allocated and

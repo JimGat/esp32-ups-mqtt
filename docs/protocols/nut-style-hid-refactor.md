@@ -503,3 +503,7 @@ Descriptor-first isolation rules for this phase:
 - Automatically queue a HID report descriptor request immediately after the APC HID interface is claimed.
 - Allow descriptor commands to run even when Active Debug mode is not manually enabled.
 - Use `/api/hid-map`, serial `NUT-MAP` logs, and debug records as the primary validation surfaces.
+
+## v0.4.10-dev HID map endpoint hardening
+
+`/api/hid-map` must be a safe diagnostic endpoint even before descriptor capture succeeds. It now builds a small non-chunked JSON response and logs request/response metadata so route registration or handler failures are visible in serial logs. HTTP route registration also logs success/failure for each route to catch max-handler or duplicate-route problems explicitly.

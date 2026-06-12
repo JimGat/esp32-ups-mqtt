@@ -1076,6 +1076,7 @@ static void usb_debug_process_commands(void)
         }
 
         if (cmd.type == USB_DEBUG_CMD_DESCRIPTOR) {
+            ESP_LOGW(TAG, "DESCRIPTOR_FIRST: processing queued HID report descriptor request");
             usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor processing");
             request_hid_report_descriptor(ups_device, HID_INTERFACE);
         } else if (cmd.type == USB_DEBUG_CMD_GET_REPORT) {
@@ -1187,7 +1188,7 @@ void usb_host_task(void *arg)
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {
-            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d", loop_count, ups_connected);
+            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, descriptor_queued: %d, map_version: %lu, map_count: %u", loop_count, ups_connected, descriptor_first_report_requested, (unsigned long)runtime_map_version, (unsigned)runtime_map_count);
         }
 
         // CRITICAL: Handle USB host LIBRARY events first (device connection/disconnection)

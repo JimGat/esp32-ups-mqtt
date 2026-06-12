@@ -1158,7 +1158,7 @@ void usb_host_task(void *arg)
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {
-            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d", loop_count, ups_connected);
+            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, needed: %d, complete: %d", loop_count, ups_connected, descriptor_needed, descriptor_complete);
         }
 
         // CRITICAL: Handle USB host LIBRARY events first (device connection/disconnection)
@@ -1195,6 +1195,19 @@ void usb_host_task(void *arg)
         } else if (err == ESP_OK) {
             error_count = 0;  // Reset error count on success
             ESP_LOGI(TAG, "DEBUG: USB client event received (not timeout)");
+        }
+
+        // v0.4.14 STRICT DESCRIPTOR-FIRST MODE:
+        if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {
+            ESP_LOGI(TAG, "NUT-HID: Submitting HID Report Descriptor request from task context");
+            descriptor_requested = true;
+            usb_debug_request_descriptor();
+        }
+
+        // ABSOLUTE NO-POLLING RULE:
+        if (!descriptor_complete) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
         }
 
         // If UPS is connected, try to read HID reports.

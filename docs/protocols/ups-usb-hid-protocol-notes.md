@@ -77,7 +77,8 @@ Starting in v0.3.22-dev, `/usb-debug` has two descriptor dump views:
 | Report ID | Direction | HID Usage / Meaning | Mapping | Confidence | Notes |
 |---:|---|---|---|---|---|
 | `0x0C` | Input + Feature | Remaining Capacity | `battery_charge` | Confirmed descriptor, confirmed runtime behavior | Likely payload byte after report ID is percent. |
-| `0x0D` | Input + Feature | Voltage-like Battery System value | `battery_voltage` | Confirmed descriptor, confirmed runtime behavior | Unit suggests volts. Use live payload samples to confirm scale. |
+| `0x0B` | Input + Feature | Battery voltage-like report | `battery_voltage` | Confirmed runtime behavior, likely mapping | Live samples around `0x154A` decode as `54.50V` with `/100`, matching a 48V lead-acid pack on charge. |
+| `0x0D` | Input + Feature | AC line voltage-like report | `input_voltage` | Confirmed runtime behavior, likely mapping | Live samples such as `0x0474` decode as `114.0V` with `/10`, matching the UPS display around 113-115V. |
 | `0x0A` | Feature | Runtime/config-style value | `battery_runtime` currently | Likely | Existing parser saw `0A C0 12` as 4800 seconds / 80 min. Keep mapping but verify descriptor semantics/scaling. |
 | `0x09` | Input + Feature bitfield plus 16-bit values | PresentStatus-style flags and related status/threshold fields | `status`, `power_failure`, flags, possible load flag | Likely/needs bit confirmation | Clean v0.3.22 dump shows dense 1-bit PresentStatus-style fields under report `0x09`, not `0x07`. Includes AC/line-present-like usage, Battery Present, Overload, Shutdown Requested, Charging, Discharging, Need Replacement, Below Remaining Capacity Limit, Percent Load usage/flag, and vendor bit. |
 | `0x14` | Input + Feature-like | Audible Alarm Control | `beeper_status` | Likely | 8-bit enum, logical range 1..3. Do not expose writes until SET_REPORT is deliberately implemented and gated. |
@@ -135,9 +136,9 @@ Captured from Jim's APC Smart-UPS SMT2200 while online / line power present, usi
 |---:|---|---:|---|---|
 | `0x09` | `09 A8 4A` | `0x4AA8` / 19112 | PresentStatus-style bitfield; bits set: 3, 5, 7, 9, 11, 14 while online | Confirmed sample, bit meanings need offline compare |
 | `0x0C` | `0C 64` | 100 | Battery charge / RemainingCapacity = 100% | Confirmed |
-| `0x0D` | `0D B0 13` | 5040 | Battery voltage-like value. Descriptor unit/exponent suggests special scaling; compare against existing bridge reading before final scale. | Confirmed sample, scale pending |
+| `0x0D` | `0D B0 13` / later `0D 74 04`, `0D B0 04` | 5040 / 1140 / 1200 | AC line voltage candidate, scale `/10`; `0D 74 04` = 114.0V matches UPS display around 113-115V. | Likely, pending power-pull validation |
 | `0x0A` | `0A C0 12` | 4800 | Runtime = 4800 seconds = 80 minutes | Confirmed |
-| `0x0B` | `0B 4A 15` | 5450 | Voltage usage report. Possible nominal/config voltage or model-specific value; scale pending. | Confirmed sample, meaning pending |
+| `0x0B` | `0B 4A 15` | 5450 | Battery pack voltage, scale `/100` = 54.50V for 48V lead-acid pack on charge. | Likely, pending power-pull validation |
 | `0x11` | `11 0A` | 10 | Low charge threshold = 10% | Confirmed |
 | `0x14` | `14 02` | 2 | Audible alarm / beeper enum = 2 | Confirmed sample, enum labels pending |
 
@@ -189,7 +190,8 @@ Future manufacturer/model table implementation rules live in `docs/protocols/ups
 3. Manually GET_REPORT likely IDs and preserve sample payloads:
    - `0x09` status bitfield / PresentStatus flags
    - `0x0C` battery charge
-   - `0x0D` battery voltage
+   - `0x0B` battery pack voltage (`/100`)
+   - `0x0D` AC line/input voltage candidate (`/10`)
    - `0x0A` runtime
    - `0x11` low charge threshold
    - `0x14` beeper/audible alarm
@@ -207,7 +209,7 @@ SMT2200 report `0x09` online sample `09 A8 4A` sets bits `3, 5, 7, 9, 11, 14`. E
 
 Jim confirmed the physical SMT2200 state for online sample `09 A8 4A`: the unit was online, charging, carrying about 14% load, not overloaded, and did not need battery replacement. Therefore v0.3.26-dev treats bit 3 as `OL` and bit 5 as `CHRG`. Bits 7 and 11 remain unassigned for this model and must not be rendered as `OVER` or `RB` from this sample.
 
-## v0.3.40 USB Debug Safe Enumeration Notes
+## v0.3.41 USB Debug Safe Enumeration Notes
 
 The USB debug API now has a safer manual request path for protocol discovery:
 
@@ -218,15 +220,15 @@ The USB debug API now has a safer manual request path for protocol discovery:
 
 Use `request-safe` for automated enumeration. Reserve raw `/api/usb-debug/request` for one-off low-level USB experiments where the caller deliberately controls the exact transfer length.
 
-## v0.3.40 USB Debug Handler Footprint Note
+## v0.3.41 USB Debug Handler Footprint Note
 
 The records handlers were reduced to small batches to avoid excessive ESP32 HTTP task stack use while serving debug records. Use the `since` query parameter to page through records in multiple calls rather than asking one handler invocation to format a large capture buffer.
 
-## v0.3.40 Safe GET_REPORT Length Note
+## v0.3.41 Safe GET_REPORT Length Note
 
 Safe manual GET_REPORT requests now use an 8-byte padded request for normal small reports instead of the literal 2-3 byte descriptor minimum. The SMT2200/ESP-IDF control path returned known reports successfully with 8-byte requests but could re-enumerate or fail when asked for very short control-read lengths. Vendor 63-byte reports remain clamped to 64 bytes.
 
-## v0.3.40 SMT2200 Load Percent Mapping
+## v0.3.41 SMT2200 Load Percent Mapping
 
 Safe enumeration found two load-correlated reports while the UPS front panel showed Load Power 12% / 237W and Load VA 11% / 242VA:
 
@@ -235,4 +237,16 @@ Safe enumeration found two load-correlated reports while the UPS front panel sho
 | `0x08` Input/Feature | `08 78 00` | little-endian `120`, scale `/10` = `12.0%` | Primary SMT2200 `load_percent` mapping. |
 | `0x07` Input/Feature | `07 0C 00` | little-endian `12` | Corroborating direct load-like value; preserved as protocol evidence but not yet used for parser output. |
 
-Firmware v0.3.40 adds report `0x08` to the SMT2200 poll list and parses it as load percent.
+Firmware v0.3.41 adds report `0x08` to the SMT2200 poll list and parses it as load percent.
+
+
+## v0.3.41 SMT2200 Voltage Mapping
+
+After transport stabilization disabled the leaking one-shot interrupt-IN path, GET_REPORT-only polling produced consistent voltage-like reports. Jim confirmed the UPS front panel showed roughly 115V AC at a solid 60Hz during the capture.
+
+| Report | Response examples | Decode | Interpretation |
+|---|---|---|---|
+| `0x0B` Input/Feature | `0B 4A 15`, `0B 36 15` | little-endian `/100` = `54.50V`, `54.30V` | Primary SMT2200 `battery_voltage` mapping for the 48V pack. |
+| `0x0D` Input/Feature | `0D 74 04`, `0D B0 04` | little-endian `/10` = `114.0V`, `120.0V` | SMT2200 AC line/input-voltage candidate. `114.0V` matches Jim's display around `113-115V`. |
+
+Power-pull validation is still pending. During that test, compare `0x0D` against the UPS display to determine whether it tracks input voltage, output voltage, or a line-voltage value selected by UPS state.

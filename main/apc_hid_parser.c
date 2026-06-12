@@ -231,14 +231,14 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0B:  // Voltage/config-like value
+        case 0x0B:  // SMT2200 battery pack voltage / generic nominal voltage
             if (is_smt2200_profile()) {
-                ESP_LOGI(TAG, "   Type: SMT2200 Voltage-like Report 0x0B (diagnostic only)");
+                ESP_LOGI(TAG, "   Type: SMT2200 Battery Pack Voltage");
                 if (length >= 3) {
                     uint16_t raw = data[1] | (data[2] << 8);
-                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X -> candidate %.2fV, NOT publishing until transport/protocol confirmed",
-                             raw, (float)raw / 100.0f);
-                    // Do not update metrics from this unconfirmed SMT2200 voltage-like report.
+                    target->battery_voltage = (float)raw / 100.0f;
+                    ESP_LOGI(TAG, "   └─ Battery Pack: %.2fV (0x%04X / 100)", target->battery_voltage, raw);
+                    updated = true;
                 }
             } else {
                 ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
@@ -250,14 +250,14 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x0D:  // SMT2200 voltage-like report -- diagnostic only until transport/protocol is proven
+        case 0x0D:  // SMT2200 AC line voltage / generic battery voltage
             if (is_smt2200_profile()) {
-                ESP_LOGI(TAG, "   Type: SMT2200 Report 0x0D (diagnostic only)");
+                ESP_LOGI(TAG, "   Type: SMT2200 AC Line Voltage");
                 if (length >= 3) {
                     uint16_t raw = data[1] | (data[2] << 8);
-                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X -> /100 %.2fV, /10 %.2fV; NOT publishing",
-                             raw, (float)raw / 100.0f, (float)raw / 10.0f);
-                    // Do not update battery_voltage from 0x0D on SMT2200 until communication/protocol is confirmed.
+                    target->input_voltage = (float)raw / 10.0f;
+                    ESP_LOGI(TAG, "   └─ Input/Line: %.1fV AC (0x%04X / 10)", target->input_voltage, raw);
+                    updated = true;
                 }
             } else {
                 ESP_LOGI(TAG, "   Type: Battery Voltage (generic APC)");

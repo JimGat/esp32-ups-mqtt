@@ -1123,26 +1123,21 @@ void usb_host_task(void *arg)
                 continue;
             }
 
-            // Normal mode parses interrupt reports into metrics.
-            // Passive debug mode captures the same raw interrupt stream without mutating metrics.
-            err = read_hid_report(report_buffer, sizeof(report_buffer), &report_len);
-
-            if (err == ESP_OK && report_len > 0) {
-                // First byte is usually the report ID
-                uint8_t report_id = report_buffer[0];
-
-                ESP_LOGD(TAG, "📥 HID Report ID: 0x%02X, Length: %d", report_id, report_len);
-
-                usb_debug_config_t cfg;
-                usb_debug_get_config(&cfg);
-                if (cfg.mode != USB_DEBUG_MODE_OFF && cfg.capture_interrupt_reports) {
-                    usb_debug_record_add(USB_DEBUG_REC_INTERRUPT, report_id, 0, report_buffer, report_len, "interrupt IN");
-                }
-
-                // In USB debug mode we capture raw traffic but do not mutate production metrics.
-                if (cfg.mode == USB_DEBUG_MODE_OFF) {
-                    apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
-                }
+            // TRANSPORT STABILIZATION MODE (v0.3.39-dev):
+            // Disable one-shot interrupt-IN polling. The previous pattern allocated and
+            // submitted a fresh interrupt transfer every loop, timed out at the app layer
+            // after 500ms, then sometimes leaked the still-owned transfer after a late
+            // callback never arrived. That leaves USB transfer ownership ambiguous and
+            // makes subsequent GET_REPORT data untrustworthy.
+            //
+            // For this diagnostic build, normal bridge telemetry is driven only by
+            // synchronous EP0 GET_REPORT polls below. Interrupt-IN will be reintroduced
+            // only as a proper persistent transfer state machine with deterministic
+            // cancel/free lifecycle.
+            static bool interrupt_disabled_logged = false;
+            if (!interrupt_disabled_logged) {
+                ESP_LOGW(TAG, "TRANSPORT: interrupt-IN polling disabled; using GET_REPORT-only mode");
+                interrupt_disabled_logged = true;
             }
 
             usb_debug_config_t loop_cfg;

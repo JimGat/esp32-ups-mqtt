@@ -77,6 +77,8 @@ bool nut_runtime_map_compose_status(const nut_runtime_map_entry_t *entries, size
 const char *nut_runtime_key_str(nut_runtime_key_t key);
 const char *nut_runtime_status_confidence_str(nut_runtime_status_confidence_t confidence);
 
+size_t nut_runtime_map_entry_to_json(const nut_runtime_map_entry_t *entry, char *out, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

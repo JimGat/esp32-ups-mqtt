@@ -486,3 +486,7 @@ This replaces raw report-ID guessing. Reports like `0x05`, `0x09`, `0x12`, and `
 ## v0.4.7-dev runtime NUT map scaffold
 
 Started implementation of the new dynamic direction with a host-tested `nut_runtime_map` module. It converts descriptor-resolved HID fields into semantic NUT runtime map entries such as `battery.charge`, `input.voltage`, and `ups.status.acpresent`, preserving report type, report ID, bit offset, bit size, logical range, unit exponent, source, and confidence. It also includes a conservative status composer that returns `UNKNOWN` unless descriptor-confirmed status sources have live values. The descriptor dump callback now builds and logs a runtime semantic map from parsed descriptor fields; this is evidence/provenance only and does not yet change MQTT status publishing.
+
+## v0.4.8-dev HID/NUT map endpoint
+
+Added `/api/hid-map` to expose the latest descriptor-derived runtime semantic map as JSON. The descriptor callback stores the runtime map snapshot and already logs each `NUT-MAP` entry to the serial console. This endpoint is the preferred next diagnostic surface after a descriptor dump: it separates descriptor-derived semantics from raw debug records and makes firmware/model variation visible without relying on fixed report-ID tables.

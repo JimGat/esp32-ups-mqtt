@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "ups_profile.h"
+#include "nut_runtime_map.h"
 
 void usb_host_set_configured_profile(ups_profile_t profile);
 ups_profile_t usb_host_get_active_profile(void);
@@ -68,5 +69,8 @@ esp_err_t usb_debug_request_descriptor(void);
 uint16_t usb_debug_safe_report_length(uint8_t report_id, uint16_t requested_length);
 esp_err_t usb_debug_request_report(uint8_t report_type, uint8_t report_id, uint16_t length);
 esp_err_t usb_debug_request_report_safe(uint8_t report_type, uint8_t report_id, uint16_t requested_length);
+
+size_t usb_debug_get_runtime_map(nut_runtime_map_entry_t *out, size_t max_entries,
+                                 uint32_t *version, uint16_t *descriptor_len);
 
 #endif // USB_HOST_MANAGER_H

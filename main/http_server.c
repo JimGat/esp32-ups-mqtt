@@ -4,6 +4,7 @@
 #include "wifi_manager.h"
 #include "ota_update.h"
 #include "ups_hid_map.h"
+#include "nut_runtime_map.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -936,7 +937,7 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "<label>Length</label><input name='len' value='64'>"
         "<button type='submit'>Safe GET_REPORT</button><small> Uses descriptor-sized guarded reads; raw endpoint remains /api/usb-debug/request.</small></form>"
         "<form method='POST' action='/api/usb-debug/clear'><button type='submit'>Clear Debug Capture</button></form>"
-        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a> | <a href='/api/usb-debug/records.json'>Records JSON</a></p>"
+        "<p><a href='/api/usb-debug'>State JSON</a> | <a href='/api/usb-debug/records'>Captured Records</a> | <a href='/api/usb-debug/records.json'>Records JSON</a> | <a href='/api/hid-map'>HID/NUT Map JSON</a></p>"
         "<pre id='dbg'>Loading...</pre>"
         "<script>async function poll(){try{let s=await fetch('/api/usb-debug');let r=await fetch('/api/usb-debug/records');document.getElementById('dbg').textContent=await s.text()+'\\n\\n'+await r.text();}catch(e){document.getElementById('dbg').textContent=e;}setTimeout(poll,2000);}poll();</script>"
         "</div>");
@@ -966,6 +967,32 @@ static uint32_t get_query_u32(httpd_req_t *req, const char *key, uint32_t def)
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return def;
     if (httpd_query_key_value(query, key, val, sizeof(val)) != ESP_OK) return def;
     return (uint32_t)parse_u32_auto(val);
+}
+
+static esp_err_t hid_map_json_handler(httpd_req_t *req)
+{
+    if (!check_basic_auth(req)) return ESP_OK;
+    nut_runtime_map_entry_t entries[32];
+    uint32_t version = 0;
+    uint16_t descriptor_len = 0;
+    size_t count = usb_debug_get_runtime_map(entries, 32, &version, &descriptor_len);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    char line[512];
+    snprintf(line, sizeof(line),
+             "{\"version\":%lu,\"descriptor_len\":%u,\"count\":%u,\"entries\":[\n",
+             (unsigned long)version, (unsigned)descriptor_len, (unsigned)count);
+    httpd_resp_sendstr_chunk(req, line);
+    for (size_t i = 0; i < count; i++) {
+        char entry_json[448];
+        nut_runtime_map_entry_to_json(&entries[i], entry_json, sizeof(entry_json));
+        snprintf(line, sizeof(line), "%s%s\n", i ? "," : "", entry_json);
+        httpd_resp_sendstr_chunk(req, line);
+    }
+    httpd_resp_sendstr_chunk(req, "]}");
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
 }
 
 static esp_err_t usb_debug_records_handler(httpd_req_t *req)
@@ -1112,7 +1139,7 @@ esp_err_t http_server_start(app_config_t *config)
 
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.stack_size = 8192;
-    httpd_config.max_uri_handlers = 20;
+    httpd_config.max_uri_handlers = 24;
 
     esp_err_t err = httpd_start(&server, &httpd_config);
     if (err != ESP_OK) {
@@ -1128,6 +1155,7 @@ esp_err_t http_server_start(app_config_t *config)
     const httpd_uri_t save_uri    = { .uri = "/save",     .method = HTTP_POST, .handler = save_handler    };
     const httpd_uri_t usb_debug_page_uri = { .uri = "/usb-debug", .method = HTTP_GET, .handler = usb_debug_page_handler };
     const httpd_uri_t usb_debug_state_uri = { .uri = "/api/usb-debug", .method = HTTP_GET, .handler = usb_debug_state_handler };
+    const httpd_uri_t hid_map_uri = { .uri = "/api/hid-map", .method = HTTP_GET, .handler = hid_map_json_handler };
     const httpd_uri_t usb_debug_records_uri = { .uri = "/api/usb-debug/records", .method = HTTP_GET, .handler = usb_debug_records_handler };
     const httpd_uri_t usb_debug_records_json_uri = { .uri = "/api/usb-debug/records.json", .method = HTTP_GET, .handler = usb_debug_records_json_handler };
     const httpd_uri_t usb_debug_config_uri = { .uri = "/api/usb-debug/config", .method = HTTP_POST, .handler = usb_debug_config_handler };
@@ -1144,6 +1172,7 @@ esp_err_t http_server_start(app_config_t *config)
     httpd_register_uri_handler(server, &save_uri);
     httpd_register_uri_handler(server, &usb_debug_page_uri);
     httpd_register_uri_handler(server, &usb_debug_state_uri);
+    httpd_register_uri_handler(server, &hid_map_uri);
     httpd_register_uri_handler(server, &usb_debug_records_uri);
     httpd_register_uri_handler(server, &usb_debug_records_json_uri);
     httpd_register_uri_handler(server, &usb_debug_config_uri);

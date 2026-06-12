@@ -3,6 +3,27 @@
 #include <stdio.h>
 #include <string.h>
 
+static const char *source_str(nut_runtime_source_t source)
+{
+    switch (source) {
+    case NUT_RUNTIME_SOURCE_DESCRIPTOR: return "descriptor";
+    case NUT_RUNTIME_SOURCE_QUIRK: return "quirk";
+    case NUT_RUNTIME_SOURCE_DERIVED: return "derived";
+    default: return "unknown";
+    }
+}
+
+static const char *confidence_str(nut_runtime_confidence_t confidence)
+{
+    switch (confidence) {
+    case NUT_RUNTIME_CONF_DESCRIPTOR: return "descriptor";
+    case NUT_RUNTIME_CONF_QUIRK: return "quirk";
+    case NUT_RUNTIME_CONF_DERIVED: return "derived";
+    case NUT_RUNTIME_CONF_UNMAPPED:
+    default: return "unmapped";
+    }
+}
+
 static bool contains(const char *haystack, const char *needle)
 {
     return haystack != NULL && needle != NULL && strstr(haystack, needle) != NULL;
@@ -149,4 +170,31 @@ const char *nut_runtime_status_confidence_str(nut_runtime_status_confidence_t co
     case NUT_RUNTIME_STATUS_UNMAPPED:
     default: return "unmapped";
     }
+}
+
+
+size_t nut_runtime_map_entry_to_json(const nut_runtime_map_entry_t *entry, char *out, size_t out_size)
+{
+    if (entry == NULL || out == NULL || out_size == 0) return 0;
+    int n = snprintf(out, out_size,
+        "{\"key\":\"%s\",\"nut\":\"%s\",\"hid_path\":\"%s\","
+        "\"report_type\":\"%s\",\"report_id\":\"0x%02X\","
+        "\"bit_offset\":%u,\"bit_size\":%u,"
+        "\"logical_min\":%ld,\"logical_max\":%ld,\"unit_exponent\":%d,"
+        "\"source\":\"%s\",\"confidence\":\"%s\",\"status_token\":\"%s\"}",
+        nut_runtime_key_str(entry->key), entry->nut_name, entry->hid_path,
+        hid_descriptor_report_type_str(entry->report_type), entry->report_id,
+        (unsigned)entry->bit_offset, (unsigned)entry->bit_size,
+        (long)entry->logical_min, (long)entry->logical_max, (int)entry->unit_exponent,
+        source_str(entry->source), confidence_str(entry->confidence),
+        entry->status_token ? entry->status_token : "");
+    if (n < 0) {
+        out[0] = '\0';
+        return 0;
+    }
+    if ((size_t)n >= out_size) {
+        out[out_size - 1] = '\0';
+        return out_size - 1;
+    }
+    return (size_t)n;
 }

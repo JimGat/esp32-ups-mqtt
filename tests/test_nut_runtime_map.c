@@ -102,10 +102,43 @@ static void test_unknown_status_without_descriptor_status_sources(void)
     assert(conf == NUT_RUNTIME_STATUS_UNMAPPED);
 }
 
+
+static void test_entry_json_includes_runtime_provenance(void)
+{
+    nut_runtime_map_entry_t entry = {
+        .key = NUT_RUNTIME_KEY_STATUS_ACPRESENT,
+        .report_type = HID_DESC_REPORT_INPUT,
+        .report_id = 0x21,
+        .bit_offset = 8,
+        .bit_size = 1,
+        .logical_min = 0,
+        .logical_max = 1,
+        .unit_exponent = 0,
+        .source = NUT_RUNTIME_SOURCE_DESCRIPTOR,
+        .confidence = NUT_RUNTIME_CONF_DESCRIPTOR,
+        .status_token = "OL",
+    };
+    strncpy(entry.nut_name, "ups.status.acpresent", sizeof(entry.nut_name) - 1);
+    strncpy(entry.hid_path, "UPS.PowerSummary.PresentStatus.ACPresent", sizeof(entry.hid_path) - 1);
+    char json[512];
+
+    size_t n = nut_runtime_map_entry_to_json(&entry, json, sizeof(json));
+
+    assert(n > 0);
+    assert(strstr(json, "\"nut\":\"ups.status.acpresent\"") != NULL);
+    assert(strstr(json, "\"report_type\":\"Input\"") != NULL);
+    assert(strstr(json, "\"report_id\":\"0x21\"") != NULL);
+    assert(strstr(json, "\"bit_offset\":8") != NULL);
+    assert(strstr(json, "\"source\":\"descriptor\"") != NULL);
+    assert(strstr(json, "\"confidence\":\"descriptor\"") != NULL);
+    assert(strstr(json, "\"status_token\":\"OL\"") != NULL);
+}
+
 int main(void)
 {
     test_builds_status_sources_from_descriptor_semantics();
     test_composes_status_only_from_confirmed_descriptor_flags();
     test_unknown_status_without_descriptor_status_sources();
+    test_entry_json_includes_runtime_provenance();
     return 0;
 }

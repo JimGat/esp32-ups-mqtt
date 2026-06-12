@@ -90,6 +90,12 @@ static usb_debug_config_t debug_cfg = {
     .include_control_setup = false,
     .log_to_esp_log = false,
 };
+static SemaphoreHandle_t debug_mutex = NULL;
+static nut_runtime_map_entry_t runtime_map_snapshot[32];
+static size_t runtime_map_count = 0;
+static uint32_t runtime_map_version = 0;
+static uint16_t runtime_map_descriptor_len = 0;
+
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
@@ -139,6 +145,13 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             size_t runtime_count = nut_runtime_map_build(fields, field_count,
                                                          runtime_map, sizeof(runtime_map) / sizeof(runtime_map[0]));
             ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
+            if (debug_mutex && xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                runtime_map_count = runtime_count;
+                memcpy(runtime_map_snapshot, runtime_map, runtime_count * sizeof(runtime_map_snapshot[0]));
+                runtime_map_descriptor_len = (uint16_t)payload_len;
+                runtime_map_version++;
+                xSemaphoreGive(debug_mutex);
+            }
             char map_summary[96];
             snprintf(map_summary, sizeof(map_summary), "nut runtime map entries=%u", (unsigned)runtime_count);
             usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, map_summary);
@@ -320,7 +333,6 @@ typedef struct {
 } usb_debug_cmd_t;
 
 static usb_debug_state_t debug_state = {0};
-static SemaphoreHandle_t debug_mutex = NULL;
 static QueueHandle_t debug_cmd_queue = NULL;
 static usb_debug_record_t debug_ring[USB_DEBUG_RING_SIZE];
 static uint32_t debug_next_seq = 1;
@@ -499,6 +511,21 @@ size_t usb_debug_get_records(usb_debug_record_t *out, size_t max_records, uint32
     }
     xSemaphoreGive(debug_mutex);
     return copied;
+}
+
+size_t usb_debug_get_runtime_map(nut_runtime_map_entry_t *out, size_t max_entries,
+                                 uint32_t *version, uint16_t *descriptor_len)
+{
+    if (version) *version = 0;
+    if (descriptor_len) *descriptor_len = 0;
+    if (out == NULL || max_entries == 0 || debug_mutex == NULL) return 0;
+    if (xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return 0;
+    size_t n = runtime_map_count < max_entries ? runtime_map_count : max_entries;
+    memcpy(out, runtime_map_snapshot, n * sizeof(out[0]));
+    if (version) *version = runtime_map_version;
+    if (descriptor_len) *descriptor_len = runtime_map_descriptor_len;
+    xSemaphoreGive(debug_mutex);
+    return n;
 }
 
 void usb_debug_clear_records(void)

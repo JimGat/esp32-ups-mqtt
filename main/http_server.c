@@ -1056,10 +1056,12 @@ static esp_err_t usb_debug_descriptor_handler(httpd_req_t *req)
         }
     }
 
-    usb_debug_clear_records();
     esp_err_t err = usb_debug_request_descriptor();
-    if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
+    }
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    return httpd_resp_sendstr(req, "descriptor queued; return to /usb-debug and refresh Records JSON in a few seconds\\n");
 }
 
 static esp_err_t usb_debug_request_common_handler(httpd_req_t *req, bool safe)

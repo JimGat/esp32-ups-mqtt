@@ -428,3 +428,7 @@ The captured-records endpoints now return the latest 64 records by default inste
 ## v0.4.5-dev descriptor dump stability fix
 
 The v0.4.4 debug-record expansion was rolled back to the small fixed stack-buffer handlers because field testing showed the web UI could hang after clicking `Dump HID Report Descriptor`. The firmware now keeps the original 64-record ring and 16-record HTTP page size, but returns the latest records by default and clears the debug ring just before queuing a descriptor dump. This preserves the low-memory behavior of v0.4.3 while making the post-dump records window useful.
+
+## v0.4.6-dev descriptor POST stability fix
+
+The descriptor dump HTTP handler no longer clears debug records or resets the debug command queue from the HTTP server context before enqueueing the descriptor command. Field testing on v0.4.5 showed the browser could sit forever on `Loading...` and the debug ring would contain only the pre-existing `interface claimed` record, indicating the POST did not complete the queue path. The handler now keeps the v0.4.3-style low-memory behavior, queues the descriptor command, and returns a plain text 200 response instead of a redirect.

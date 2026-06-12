@@ -64,6 +64,7 @@
 #include "apc_hid_parser.h"
 #include "ups_hid_map.h"
 #include "hid_descriptor_parser.h"
+#include "nut_runtime_map.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -133,6 +134,28 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
         if (hid_descriptor_parse(transfer->data_buffer + setup_len, payload_len,
                                  fields, sizeof(fields) / sizeof(fields[0]), &field_count)) {
             ESP_LOGI(TAG, "NUT-HID: descriptor resolver found %u fields", (unsigned)field_count);
+
+            nut_runtime_map_entry_t runtime_map[32];
+            size_t runtime_count = nut_runtime_map_build(fields, field_count,
+                                                         runtime_map, sizeof(runtime_map) / sizeof(runtime_map[0]));
+            ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
+            char map_summary[96];
+            snprintf(map_summary, sizeof(map_summary), "nut runtime map entries=%u", (unsigned)runtime_count);
+            usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, map_summary);
+
+            for (size_t m = 0; m < runtime_count; m++) {
+                ESP_LOGI(TAG, "NUT-MAP: %s %s report=0x%02X bit=%u size=%u path=%s",
+                         nut_runtime_key_str(runtime_map[m].key),
+                         hid_descriptor_report_type_str(runtime_map[m].report_type),
+                         runtime_map[m].report_id, runtime_map[m].bit_offset,
+                         runtime_map[m].bit_size, runtime_map[m].hid_path);
+                char note[160];
+                snprintf(note, sizeof(note), "map %s r=0x%02X b=%u s=%u",
+                         nut_runtime_key_str(runtime_map[m].key), runtime_map[m].report_id,
+                         runtime_map[m].bit_offset, runtime_map[m].bit_size);
+                usb_debug_record_add(USB_DEBUG_REC_EVENT, runtime_map[m].report_id, 0, NULL, 0, note);
+            }
+
             for (size_t f = 0; f < field_count; f++) {
                 if (fields[f].nut_name[0] != '\0' || strstr(fields[f].hid_path, "PresentStatus") != NULL) {
                     ESP_LOGI(TAG, "NUT-HID: %s report=0x%02X bit=%u size=%u path=%s nut=%s",

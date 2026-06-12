@@ -7,6 +7,7 @@ idf_component_register(
         "apc_hid_parser.c"
         "ups_hid_map.c"
         "hid_descriptor_parser.c"
+        "nut_runtime_map.c"
         "usb_host_manager.c"
         "http_server.c"
         "ota_update.c"

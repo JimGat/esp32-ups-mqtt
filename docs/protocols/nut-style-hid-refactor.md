@@ -461,3 +461,28 @@ Controlled line-state test comparing on-mains vs AC input pulled while in Active
 | `0x14` | Input `1` | `14 02` | `14 02` | no |
 
 Result: reports `0x05`, `0x12`, and `0x14` did not respond to AC line-state changes and must not be used to infer canonical `OL`/`OB`. Continue to treat report `0x09` as raw/unmapped and status as `UNKNOWN` until a changing descriptor-backed line-state source is identified. The already-confirmed useful AC-pull signals remain measured telemetry like input voltage (`0x0D`) rather than canonical UPS status.
+
+## New direction: dynamic NUT-style runtime HID map
+
+Do not make the APC SMT2200 model table the source of truth for status or telemetry semantics. Firmware revisions may legitimately change report IDs, bit packing, report type, scale, or unit metadata. The bridge should instead reproduce the important NUT/usbhid-ups discovery pattern at runtime:
+
+1. Parse the connected UPS HID report descriptor.
+2. Build a runtime semantic map from HID usage paths to UPS/NUT concepts.
+3. Preserve report type, report ID, bit offset, bit size, logical range, unit, unit exponent, raw bytes, decoded value, age, confidence, and source for every mapped field.
+4. Poll the descriptor-derived fields safely using GET_REPORT where appropriate.
+5. Compose canonical `ups.status` only from confirmed semantic sources like `UPS.PowerSummary.PresentStatus.ACPresent`, `Discharging`, `Charging`, `BelowRemainingCapacityLimit`, `NeedReplacement`, and `Overload`.
+6. Keep model/profile tables only for quirks: preferred report type, broken descriptor overrides, ignored fields, safe lengths, scale fixes, and confidence policy.
+
+The target architecture is therefore:
+
+- Generic HID descriptor parser: report layouts and usage paths.
+- NUT semantic resolver: usage paths to `battery.charge`, `input.voltage`, `ups.status.*`, etc.
+- Runtime poll plan: reads the required report IDs/types and extracts fields dynamically.
+- Quirk table: model/firmware exceptions, never the default source of truth.
+- Publisher/UI: exposes provenance and publishes canonical values only when confidence is high enough; otherwise publish `UNKNOWN` or diagnostic/derived candidates separately.
+
+This replaces raw report-ID guessing. Reports like `0x05`, `0x09`, `0x12`, and `0x14` are evidence only until tied to descriptor-resolved semantic paths and validated by behavior or NUT/Linux output.
+
+## v0.4.7-dev runtime NUT map scaffold
+
+Started implementation of the new dynamic direction with a host-tested `nut_runtime_map` module. It converts descriptor-resolved HID fields into semantic NUT runtime map entries such as `battery.charge`, `input.voltage`, and `ups.status.acpresent`, preserving report type, report ID, bit offset, bit size, logical range, unit exponent, source, and confidence. It also includes a conservative status composer that returns `UNKNOWN` unless descriptor-confirmed status sources have live values. The descriptor dump callback now builds and logs a runtime semantic map from parsed descriptor fields; this is evidence/provenance only and does not yet change MQTT status publishing.

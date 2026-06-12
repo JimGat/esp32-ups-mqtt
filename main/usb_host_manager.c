@@ -1199,9 +1199,9 @@ void usb_host_task(void *arg)
 
         // v0.4.14 STRICT DESCRIPTOR-FIRST MODE:
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {
-            ESP_LOGI(TAG, "NUT-HID: Submitting HID Report Descriptor request from task context");
+            ESP_LOGI(TAG, "NUT-HID: Submitting HID Report Descriptor request directly from task context");
             descriptor_requested = true;
-            usb_debug_request_descriptor();
+            request_hid_report_descriptor(ups_device, HID_INTERFACE);
         }
 
         // ABSOLUTE NO-POLLING RULE:

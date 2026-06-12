@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Single source of truth for firmware version. Update this line only.
-set(PROJECT_VER "v0.4.14-dev")
+set(PROJECT_VER "v0.4.15-dev")
 
 # Include the ESP-IDF build system
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

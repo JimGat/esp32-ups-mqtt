@@ -424,3 +424,7 @@ The HID descriptor dump button now switches the runtime USB debug mode to Active
 ## v0.4.4-dev USB debug record visibility fix
 
 The captured-records endpoints now return the latest 64 records by default instead of the oldest 16 records. Descriptor dumps create many chunk and field records; the previous endpoint could show only early boot/config lines and make a successful descriptor dump look like it disappeared. The USB debug ring was also increased to 128 records so a full descriptor dump plus NUT field events remain visible long enough to copy them.
+
+## v0.4.5-dev descriptor dump stability fix
+
+The v0.4.4 debug-record expansion was rolled back to the small fixed stack-buffer handlers because field testing showed the web UI could hang after clicking `Dump HID Report Descriptor`. The firmware now keeps the original 64-record ring and 16-record HTTP page size, but returns the latest records by default and clears the debug ring just before queuing a descriptor dump. This preserves the low-memory behavior of v0.4.3 while making the post-dump records window useful.

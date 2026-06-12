@@ -972,10 +972,8 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     uint32_t since = get_query_u32(req, "since", 0);
-    const size_t max_records = 64;
-    usb_debug_record_t *recs = calloc(max_records, sizeof(usb_debug_record_t));
-    if (!recs) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
-    size_t n = usb_debug_get_records(recs, max_records, since);
+    usb_debug_record_t recs[16];
+    size_t n = usb_debug_get_records(recs, 16, since);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     char line[384];
@@ -986,7 +984,6 @@ static esp_err_t usb_debug_records_handler(httpd_req_t *req)
         snprintf(line, sizeof(line), "%lu %lldms type=%d report=0x%02X status=%u len=%u note=%s data=%s\n", (unsigned long)recs[i].seq, (long long)recs[i].timestamp_ms, recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, recs[i].note, hex);
         httpd_resp_sendstr_chunk(req, line);
     }
-    free(recs);
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
@@ -995,10 +992,8 @@ static esp_err_t usb_debug_records_json_handler(httpd_req_t *req)
 {
     if (!check_basic_auth(req)) return ESP_OK;
     uint32_t since = get_query_u32(req, "since", 0);
-    const size_t max_records = 64;
-    usb_debug_record_t *recs = calloc(max_records, sizeof(usb_debug_record_t));
-    if (!recs) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
-    size_t n = usb_debug_get_records(recs, max_records, since);
+    usb_debug_record_t recs[16];
+    size_t n = usb_debug_get_records(recs, 16, since);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_sendstr_chunk(req, "[\n");
@@ -1023,7 +1018,6 @@ static esp_err_t usb_debug_records_json_handler(httpd_req_t *req)
             recs[i].type, recs[i].report_id, recs[i].status, recs[i].length, note, hex);
         httpd_resp_sendstr_chunk(req, line);
     }
-    free(recs);
     httpd_resp_sendstr_chunk(req, "]");
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
@@ -1062,6 +1056,7 @@ static esp_err_t usb_debug_descriptor_handler(httpd_req_t *req)
         }
     }
 
+    usb_debug_clear_records();
     esp_err_t err = usb_debug_request_descriptor();
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     httpd_resp_set_status(req, "303 See Other"); httpd_resp_set_hdr(req, "Location", "/usb-debug"); return httpd_resp_sendstr(req, "");

@@ -420,3 +420,7 @@ This is detection/provenance only: SMT2200 canonical status still remains `UNKNO
 ## v0.4.3-dev USB debug descriptor UX fix
 
 The HID descriptor dump button now switches the runtime USB debug mode to Active Debug before queuing the descriptor command. The previous `v0.4.2-dev` UI let the browser queue a descriptor dump while the firmware was still in Normal Bridge mode if the user changed the dropdown but did not click `Apply Debug Mode` first. That produced `descriptor queued` followed by `debug inactive` and no descriptor transfer.
+
+## v0.4.4-dev USB debug record visibility fix
+
+The captured-records endpoints now return the latest 64 records by default instead of the oldest 16 records. Descriptor dumps create many chunk and field records; the previous endpoint could show only early boot/config lines and make a successful descriptor dump look like it disappeared. The USB debug ring was also increased to 128 records so a full descriptor dump plus NUT field events remain visible long enough to copy them.

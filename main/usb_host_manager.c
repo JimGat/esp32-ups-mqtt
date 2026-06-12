@@ -281,7 +281,7 @@ static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 // Runtime USB debug mode. This is intentionally NOT persisted to NVS:
 // every reboot returns the bridge to normal MQTT mode so field debug cannot
 // accidentally strand the device in a noisy diagnostic state.
-#define USB_DEBUG_RING_SIZE 64
+#define USB_DEBUG_RING_SIZE 128
 #define USB_DEBUG_CMD_QUEUE_LEN 4
 
 typedef enum {
@@ -458,9 +458,19 @@ size_t usb_debug_get_records(usb_debug_record_t *out, size_t max_records, uint32
 
     size_t copied = 0;
     size_t start = (debug_head + USB_DEBUG_RING_SIZE - debug_count) % USB_DEBUG_RING_SIZE;
-    for (size_t i = 0; i < debug_count && copied < max_records; i++) {
+    size_t available = debug_count;
+
+    // With no explicit cursor, return the latest window instead of the oldest
+    // records. Descriptor dumps can exceed the old 16-record page, and showing
+    // the oldest boot/config records made the captured-records link look empty.
+    if (since_seq == 0 && available > max_records) {
+        start = (debug_head + USB_DEBUG_RING_SIZE - max_records) % USB_DEBUG_RING_SIZE;
+        available = max_records;
+    }
+
+    for (size_t i = 0; i < available && copied < max_records; i++) {
         size_t idx = (start + i) % USB_DEBUG_RING_SIZE;
-        if (debug_ring[idx].seq > since_seq) {
+        if (since_seq == 0 || debug_ring[idx].seq > since_seq) {
             out[copied++] = debug_ring[idx];
         }
     }

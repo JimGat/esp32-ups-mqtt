@@ -508,3 +508,11 @@ This build removes remaining startup noise and legacy paths from descriptor disc
 - USB task runs at higher priority with larger stack.
 - USB task performs only USB library events, USB client events, automatic HID report descriptor request, transfer callback servicing, and heartbeat logging.
 - Legacy GET_REPORT telemetry polling is not reachable in this build, even after descriptor completion.
+
+## v0.4.17-dev: cooperative USB discovery scheduling
+
+v0.4.16 made the USB discovery task too aggressive and higher-priority than appropriate for Wi-Fi/LwIP/httpd on ESP32. Symptoms were severe ping loss and intermittent web responsiveness while waiting for USB attach. v0.4.17 keeps descriptor-first/no-polling behavior but restores cooperative scheduling:
+- USB task priority lowered from 10 to 4.
+- USB event waits reduced to short 5 ms checks.
+- Loop delay increased to 100 ms.
+- MQTT remains disabled; broker is logged only as configured, not active.

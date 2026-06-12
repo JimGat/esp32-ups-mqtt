@@ -1138,7 +1138,7 @@ void usb_host_task(void *arg)
 {
     (void)arg;
     ESP_LOGI(TAG, "📡 USB Host task started");
-    ESP_LOGI(TAG, "STRICT_DISCOVERY: USB loop handles attach events and HID report descriptor only");
+    ESP_LOGI(TAG, "STRICT_DISCOVERY: cooperative USB loop handles attach events and HID report descriptor only");
 
     int error_count = 0;
     const int MAX_ERRORS = 10;
@@ -1149,7 +1149,7 @@ void usb_host_task(void *arg)
         loop_count++;
 
         uint32_t event_flags = 0;
-        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(20), &event_flags);
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(5), &event_flags);
         if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
             ESP_LOGW(TAG, "USB-LIB: event error: %s", esp_err_to_name(lib_err));
         }
@@ -1157,7 +1157,7 @@ void usb_host_task(void *arg)
             ESP_LOGI(TAG, "USB-LIB: event_flags=0x%lx", (unsigned long)event_flags);
         }
 
-        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(20));
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(5));
         if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
             error_count++;
             ESP_LOGW(TAG, "USB-CLIENT: event error (%d/%d): %s",
@@ -1192,7 +1192,7 @@ void usb_host_task(void *arg)
 
         // Deliberately no telemetry polling and no MQTT reporting in this build.
         // After descriptor completion, remain idle so descriptor behavior is isolated.
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 

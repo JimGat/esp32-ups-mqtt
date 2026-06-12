@@ -411,7 +411,7 @@ void app_main(void)
 
     if (usb_err == ESP_OK) {
         ESP_LOGI(TAG, "✅ USB Host initialized, creating USB task");
-        xTaskCreate(usb_host_task, "usb_host", 6144, NULL, 10, NULL);
+        xTaskCreate(usb_host_task, "usb_host", 6144, NULL, 4, NULL);
     } else {
         ESP_LOGW(TAG, "⚠️ USB Host init failed: %s, falling back to simulated data", esp_err_to_name(usb_err));
         xTaskCreate(simulate_ups_data_task, "simulate_ups", 2048, NULL, 3, NULL);
@@ -421,7 +421,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
-    ESP_LOGI(TAG, "MQTT Broker: %s", app_config.mqtt_url);
+    ESP_LOGI(TAG, "MQTT Broker configured: %s (disabled in strict discovery mode)", app_config.mqtt_url);
     
     // 🕒 Initialize SNTP for accurate local time (logs, scheduled tasks)
     sntp_setoperatingmode(SNTP_OPMODE_POLL);

@@ -245,7 +245,7 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 static ups_profile_t configured_ups_profile = UPS_PROFILE_AUTO;
 static ups_profile_t active_ups_profile = UPS_PROFILE_APC_GENERIC_HID;
 
-static const uint8_t smt2200_poll_reports[] = {
+static const uint8_t smt2200_poll_reports[] __attribute__((unused)) = {
     0x09,  // SMT2200 PresentStatus-style bitfield; confirmed online sample 09 A8 4A
     0x0C,  // RemainingCapacity / battery charge; confirmed 0C 64 = 100%
     0x0A,  // RunTimeToEmpty; confirmed 0A C0 12 = 4800s
@@ -256,7 +256,7 @@ static const uint8_t smt2200_poll_reports[] = {
     0x14,  // AudibleAlarmControl / beeper enum; confirmed 14 02
 };
 
-static const uint8_t generic_apc_poll_reports[] = {
+static const uint8_t generic_apc_poll_reports[] __attribute__((unused)) = {
     0x0A,  // Battery runtime (seconds, 16-bit LE)
     0x06,  // Generic APC status flags
     0x0D,  // Battery voltage (16-bit LE / 100)
@@ -1136,175 +1136,63 @@ esp_err_t usb_host_init(void)
 
 void usb_host_task(void *arg)
 {
+    (void)arg;
     ESP_LOGI(TAG, "📡 USB Host task started");
-    ESP_LOGI(TAG, "DEBUG: Polling for USB events every 100ms");
+    ESP_LOGI(TAG, "STRICT_DISCOVERY: USB loop handles attach events and HID report descriptor only");
 
-    uint8_t report_buffer[64];
-    size_t report_len;
     int error_count = 0;
     const int MAX_ERRORS = 10;
     int loop_count = 0;
-    int poll_cycle = 0;
-    int64_t last_poll_time = 0;  // Time of last feature report poll cycle
-    const int64_t POLL_INTERVAL_MS = 10000;  // Poll feature reports every 10 seconds
-    bool initial_poll_done = false;
+    int64_t last_heartbeat_ms = 0;
 
     while (1) {
         loop_count++;
 
-        // Process any Web UI queued USB-debug commands from the safe USB task context.
-        // HTTP handlers only enqueue; they never call ESP-IDF USB APIs directly.
-        usb_debug_process_commands();
-
-        // Log every 50 loops (5 seconds) to show task is alive
-        if (loop_count % 50 == 0) {
-            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, needed: %d, complete: %d", loop_count, ups_connected, descriptor_needed, descriptor_complete);
+        uint32_t event_flags = 0;
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(20), &event_flags);
+        if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB-LIB: event error: %s", esp_err_to_name(lib_err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB-LIB: event_flags=0x%lx", (unsigned long)event_flags);
         }
 
-        // CRITICAL: Handle USB host LIBRARY events first (device connection/disconnection)
-        uint32_t event_flags;
-        esp_err_t err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
-        if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "⚠️ USB lib event error: %s", esp_err_to_name(err));
-        }
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
-            ESP_LOGW(TAG, "⚠️ No USB clients registered");
-        }
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE) {
-            ESP_LOGI(TAG, "DEBUG: All devices freed");
-        }
-
-        // Handle USB host CLIENT events (our callback)
-        err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(10));
-
-        if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(20));
+        if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
             error_count++;
-            ESP_LOGW(TAG, "⚠️ USB client event error (%d/%d): %s",
-                     error_count, MAX_ERRORS, esp_err_to_name(err));
-
+            ESP_LOGW(TAG, "USB-CLIENT: event error (%d/%d): %s",
+                     error_count, MAX_ERRORS, esp_err_to_name(client_err));
             if (error_count >= MAX_ERRORS) {
-                ESP_LOGE(TAG, "❌ USB Host failed too many times, disabling USB host");
-                ESP_LOGE(TAG, "💡 Hint: This board may not support USB OTG on external pins");
-                ESP_LOGE(TAG, "📝 Using simulated UPS data only");
-                vTaskDelete(NULL);  // Kill this task
+                ESP_LOGE(TAG, "USB-CLIENT: too many event errors; stopping USB task");
+                vTaskDelete(NULL);
                 return;
             }
-
-            vTaskDelay(pdMS_TO_TICKS(1000));  // Back off on errors
-            continue;
-        } else if (err == ESP_OK) {
-            error_count = 0;  // Reset error count on success
-            ESP_LOGI(TAG, "DEBUG: USB client event received (not timeout)");
+        } else if (client_err == ESP_OK) {
+            error_count = 0;
+            ESP_LOGI(TAG, "USB-CLIENT: event callback serviced");
         }
 
-        // v0.4.14 STRICT DESCRIPTOR-FIRST MODE:
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {
-            ESP_LOGI(TAG, "NUT-HID: Submitting HID Report Descriptor request directly from task context");
+            ESP_LOGI(TAG, "NUT-HID: submitting HID report descriptor request from USB task context");
             descriptor_requested = true;
             request_hid_report_descriptor(ups_device, HID_INTERFACE);
         }
 
-        // ABSOLUTE NO-POLLING RULE:
-        if (!descriptor_complete) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 2000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG,
+                     "STRICT_DISCOVERY heartbeat: loop=%d connected=%d needed=%d requested=%d complete=%d",
+                     loop_count,
+                     ups_connected,
+                     descriptor_needed,
+                     descriptor_requested,
+                     descriptor_complete);
         }
 
-        // If UPS is connected, try to read HID reports.
-        // Active debug mode is command-driven: skip normal interrupt reads/polls so
-        // descriptor dumps and manual GET_REPORT requests never compete with bridge traffic.
-        if (ups_connected && ups_device != NULL) {
-            usb_debug_config_t entry_cfg;
-            usb_debug_get_config(&entry_cfg);
-            if (entry_cfg.mode == USB_DEBUG_MODE_ACTIVE) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
-
-            // TRANSPORT STABILIZATION MODE (v0.3.39-dev):
-            // Disable one-shot interrupt-IN polling. The previous pattern allocated and
-            // submitted a fresh interrupt transfer every loop, timed out at the app layer
-            // after 500ms, then sometimes leaked the still-owned transfer after a late
-            // callback never arrived. That leaves USB transfer ownership ambiguous and
-            // makes subsequent GET_REPORT data untrustworthy.
-            //
-            // For this diagnostic build, normal bridge telemetry is driven only by
-            // synchronous EP0 GET_REPORT polls below. Interrupt-IN will be reintroduced
-            // only as a proper persistent transfer state machine with deterministic
-            // cancel/free lifecycle.
-            static bool interrupt_disabled_logged = false;
-            if (!interrupt_disabled_logged) {
-                ESP_LOGW(TAG, "TRANSPORT: interrupt-IN polling disabled; using GET_REPORT-only mode");
-                interrupt_disabled_logged = true;
-            }
-
-            usb_debug_config_t loop_cfg;
-            usb_debug_get_config(&loop_cfg);
-            if (loop_cfg.mode != USB_DEBUG_MODE_OFF) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
-
-            // Time-based feature report polling (loop_count is unreliable because
-            // read_hid_report blocks for seconds at a time)
-            int64_t now_ms = esp_timer_get_time() / 1000;
-            bool time_for_poll = !initial_poll_done || 
-                                 (now_ms - last_poll_time) >= POLL_INTERVAL_MS;
-            
-            if (time_for_poll) {
-                const uint8_t *poll_reports = generic_apc_poll_reports;
-                int num_poll_reports = sizeof(generic_apc_poll_reports) / sizeof(generic_apc_poll_reports[0]);
-                if (active_ups_profile == UPS_PROFILE_APC_SMT2200) {
-                    poll_reports = smt2200_poll_reports;
-                    num_poll_reports = sizeof(smt2200_poll_reports) / sizeof(smt2200_poll_reports[0]);
-                }
-
-                initial_poll_done = true;
-                int64_t poll_start_ms = esp_timer_get_time() / 1000;
-                last_poll_time = now_ms;
-                ESP_LOGI(TAG, "🔄 Active polling cycle %d [%s]: Requesting %d reports...",
-                         poll_cycle++, ups_profile_name(active_ups_profile), num_poll_reports);
-
-                for (int i = 0; i < num_poll_reports; i++) {
-                    uint8_t report_id = poll_reports[i];
-                    // CRITICAL: Clear buffer before GET_REPORT to prevent stale data
-                    memset(report_buffer, 0, sizeof(report_buffer));
-                    err = get_hid_report(report_id, report_buffer, sizeof(report_buffer), &report_len);
-
-                    if (err == ESP_OK && report_len > 0) {
-                        // Log raw hex of feature report response
-                        ESP_LOGI(TAG, "📥 GET_REPORT 0x%02X: %d bytes", report_id, report_len);
-                        char hex_buf[128] = {0};
-                        int pos = 0;
-                        for (int b = 0; b < report_len && b < 16; b++) {
-                            pos += snprintf(hex_buf + pos, sizeof(hex_buf) - pos, "%02X ", report_buffer[b]);
-                        }
-                        ESP_LOGI(TAG, "   Raw: %s", hex_buf);
-                        usb_debug_config_t cfg;
-                        usb_debug_get_config(&cfg);
-                        if (cfg.capture_feature_reports) {
-                            usb_debug_record_add(USB_DEBUG_REC_FEATURE, report_id, 0, report_buffer, report_len, "poll GET_REPORT");
-                        }
-                        // Parse the polled report
-                        apc_hid_parse_report(report_id, report_buffer, report_len, NULL);
-                    } else if (err != ESP_OK) {
-                        ESP_LOGW(TAG, "⚠️ GET_REPORT 0x%02X failed: %s", report_id, esp_err_to_name(err));
-                    }
-
-                    // Small delay between polls to avoid overwhelming UPS
-                    vTaskDelay(pdMS_TO_TICKS(20));
-                }
-
-                /* v0.4: Record poll cycle completion and duration */
-                int64_t poll_end_ms = esp_timer_get_time() / 1000;
-                uint32_t poll_duration = (uint32_t)(poll_end_ms - poll_start_ms);
-                ups_transport_stats_record_poll_complete(poll_duration);
-                ESP_LOGI(TAG, "✅ Polling cycle %d complete (%lu ms)", poll_cycle - 1, (unsigned long)poll_duration);
-            }
-        }
-
-        // Small delay
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // Deliberately no telemetry polling and no MQTT reporting in this build.
+        // After descriptor completion, remain idle so descriptor behavior is isolated.
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 

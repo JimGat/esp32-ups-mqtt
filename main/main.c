@@ -24,6 +24,12 @@
 static const char *TAG = "main";
 static app_config_t app_config;
 
+static void quiet_network_scanner_noise(void)
+{
+    esp_log_level_set("httpd_uri", ESP_LOG_ERROR);
+    esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
+}
+
 
 static void publish_immediate_power_snapshot(const ups_metrics_t *metrics)
 {
@@ -386,15 +392,15 @@ void app_main(void)
         }
     }
 
+    quiet_network_scanner_noise();
+
     // Start HTTP server (config UI + status/logs)
     ESP_LOGI(TAG, "🌐 Starting HTTP server...");
     ESP_ERROR_CHECK(http_server_start(&app_config));
 
-    // Initialize MQTT
-    ESP_LOGI(TAG, "📡 Initializing MQTT...");
-    mqtt_set_device_model(ups_profile_name(ups_profile_validate(app_config.ups_profile)));
-    ESP_ERROR_CHECK(mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass, app_config.device_label));
-    ESP_LOGI(TAG, "DEBUG: MQTT init complete");
+    // v0.4.16 STRICT DISCOVERY MODE: MQTT is intentionally not initialized.
+    // Startup path is network + HTTP + USB host + HID report descriptor only.
+    ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
     // Initialize USB Host
     ESP_LOGI(TAG, "DEBUG: About to init USB Host");
@@ -405,13 +411,13 @@ void app_main(void)
 
     if (usb_err == ESP_OK) {
         ESP_LOGI(TAG, "✅ USB Host initialized, creating USB task");
-        xTaskCreate(usb_host_task, "usb_host", 4096, NULL, 5, NULL);
+        xTaskCreate(usb_host_task, "usb_host", 6144, NULL, 10, NULL);
     } else {
         ESP_LOGW(TAG, "⚠️ USB Host init failed: %s, falling back to simulated data", esp_err_to_name(usb_err));
         xTaskCreate(simulate_ups_data_task, "simulate_ups", 2048, NULL, 3, NULL);
     }
 
-    ESP_LOGW(TAG, "STRICT_MODE: MQTT publish and power-event tasks disabled. USB task will only fetch descriptor.");
+    ESP_LOGW(TAG, "STRICT_DISCOVERY: telemetry/power-event tasks disabled; USB task only fetches HID descriptor");
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
@@ -423,7 +429,14 @@ void app_main(void)
     sntp_init();
     ESP_LOGI(TAG, "🕒 SNTP initialized (pool.ntp.org)");
     
-    ESP_LOGI(TAG, "🌐 Web UI: http://<device-ip>/  Status: http://<device-ip>/status");
+    // Get actual IP address for log message
+    esp_netif_ip_info_t ip_info;
+    esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta_netif != NULL && esp_netif_get_ip_info(sta_netif, &ip_info) == ESP_OK) {
+        ESP_LOGI(TAG, "🌐 Web UI: http://" IPSTR "/  Status: http://" IPSTR "/status", IP2STR(&ip_info.ip), IP2STR(&ip_info.ip));
+    } else {
+        ESP_LOGI(TAG, "🌐 Web UI: http://<device-ip>/  Status: http://<device-ip>/status");
+    }
 #ifdef DISABLE_USB_HOST
     ESP_LOGW(TAG, "🐛 DEBUG MODE: USB Host disabled, using simulated data only");
 #endif

@@ -498,3 +498,13 @@ This build enforces a strict state machine:
 4. **Telemetry polling is entirely disabled/commented out.** The USB task will idle until the descriptor is complete.
 
 This eliminates all ESP-IDF USB context violations and provides a clean, isolated HID Report Descriptor hex dump for NUT-style mapping analysis.
+
+## v0.4.16-dev: strict startup discovery cleanup
+
+This build removes remaining startup noise and legacy paths from descriptor discovery:
+- MQTT is not initialized.
+- Telemetry and power-event tasks are not started.
+- HTTP scanner 404 noise is suppressed at the ESP log tag level.
+- USB task runs at higher priority with larger stack.
+- USB task performs only USB library events, USB client events, automatic HID report descriptor request, transfer callback servicing, and heartbeat logging.
+- Legacy GET_REPORT telemetry polling is not reachable in this build, even after descriptor completion.

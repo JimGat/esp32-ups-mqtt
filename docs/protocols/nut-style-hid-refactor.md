@@ -436,3 +436,13 @@ The descriptor dump HTTP handler no longer clears debug records or resets the de
 ## SMT2200 report 0x05 probe evidence
 
 Field test after the 515-byte descriptor capture: safe manual `GET_REPORT` for report `0x05` returned the same two-byte payload for both Feature (`type=3`) and Input (`type=1`): `05 04`. This proves report `0x05` is readable, but the descriptor context around report `0x05` is transfer/config-style one-bit fields rather than a clean canonical `PresentStatus` source. Do not promote `0x05` directly to `OL/OB`; keep it as descriptor-backed evidence to compare against NUT/Linux and controlled line-state tests.
+
+## SMT2200 baseline descriptor-backed probe values
+
+Online/on-mains baseline probes while in Active Debug:
+
+- `GET_REPORT type=3 report=0x05 len=8 safe` returned `05 04`; `GET_REPORT type=1 report=0x05 len=8 safe` also returned `05 04`.
+- `GET_REPORT type=3 report=0x12 len=8 safe` returned `12 FF FF`. The descriptor labels report `0x12` usage `UPS.PowerSummary.PresentStatus.Charging` as a 16-bit Feature with logical range -1..32767, so `0xFFFF` likely represents signed -1 / unknown / not-applicable rather than a true boolean charging state.
+- `GET_REPORT type=3 report=0x14 len=8 safe` returned `14 02`. Existing normal polling also returns `14 02`; descriptor context includes `NeedReplacement` and audible-alarm/beeper semantics, so this remains evidence only.
+
+Do not promote these baseline values to canonical `OL/OB/CHRG/RB` until compared against Linux/NUT or a controlled line-state/battery-state change.

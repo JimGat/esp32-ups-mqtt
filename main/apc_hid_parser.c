@@ -178,21 +178,25 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
                 ESP_LOGI(TAG, "   Type: SMT2200 PresentStatus bitfield");
                 if (length >= 3) {
                     uint16_t flags = data[1] | (data[2] << 8);
-                    // Confirmed online/charging sample for Jim's SMT2200: 09 A8 4A = 0x4AA8.
-                    // Real-world state at capture: online, charging, 14% load, no overload,
-                    // no replace-battery alarm. Therefore bit 3 is OL and bit 5 is CHRG.
-                    // Bits 7 and 11 are explicitly NOT overload/replace-battery for this sample.
-                    target->status.online = (flags & (1u << 3)) != 0;
-                    target->status.charging = (flags & (1u << 5)) != 0;
-                    target->status.discharging = !target->status.online;
-                    target->status.low_battery = false;
-                    target->status.overload = false;
-                    target->status.replace_battery = false;
-                    target->status.boost = false;
-                    target->status.trim = false;
+                    // Standard APC HID PresentStatus bits:
+                    // Bit 0: Discharging
+                    // Bit 1: Charging
+                    // Bit 5: Input Power Present (1 = OL, 0 = OB)
+                    // Bit 6: Input Power Fail (1 = OB, 0 = OL)
+                    bool input_power_present = (flags & 0x0020) != 0;
+                    bool input_power_fail = (flags & 0x0040) != 0;
+                    bool charging = (flags & 0x0002) != 0;
+                    bool discharging = (flags & 0x0001) != 0;
+
+                    target->status.online = input_power_present && !input_power_fail;
+                    target->status.charging = charging;
+                    target->status.discharging = discharging || input_power_fail;
+                    target->status.low_battery = (flags & 0x0008) != 0; // Bit 3: Below Remaining Capacity
+                    
                     strlcpy(target->power_failure_status, target->status.online ? "OK" : "ON_BATTERY", sizeof(target->power_failure_status));
-                    ESP_LOGI(TAG, "   └─ SMT2200 raw status flags: 0x%04X online=%d charging=%d (alarm bits unassigned)",
-                             flags, target->status.online, target->status.charging);
+                    
+                    ESP_LOGI(TAG, "   └─ SMT2200 raw status: 0x%04X (OL=%d, OB=%d, CHRG=%d, DISCHRG=%d)",
+                             flags, target->status.online, input_power_fail, charging, discharging);
                     updated = true;
                 }
             } else {

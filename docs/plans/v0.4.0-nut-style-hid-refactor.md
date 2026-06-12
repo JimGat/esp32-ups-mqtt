@@ -8,6 +8,8 @@
 
 **Current Version Boundary:** v0.4.0-dev starts the NUT-style refactor. v0.3.x was exploratory/manual report-ID mapping.
 
+**Scope Decision:** v0.4 prioritizes trustworthy communication and confidence-gated publication over feature breadth. It is acceptable to show fewer metrics if those metrics are reliable; it is not acceptable to publish plausible-looking but unverified data.
+
 ---
 
 ## Why Strategy Changes Now
@@ -59,15 +61,21 @@ From `networkupstools/nut/drivers/apc-hid.c`:
 
 ## v0.4 Architecture Requirements
 
-### R1: Poll-Only Transport for APC 051D:0003
+### R1: USB Communication Integrity Is Non-Negotiable
+
+USB transport stability is the foundation for the entire project. If USB communication is not provably stable, no telemetry, status, MQTT publication, Home Assistant automation, or Web UI summary can be trusted.
 
 For SMT2200 / APC 5G family:
 
-- Keep interrupt-IN disabled by default.
+- Keep interrupt-IN disabled by default, matching NUT's strategy for APC `051d:0003`.
 - Use GET_REPORT Feature polling only until a proven persistent interrupt state machine exists.
 - No one-shot interrupt transfer allocate/submit/wait/free loops.
 - No late-callback leak path.
-- Transport counters must be visible.
+- No telemetry heuristics to mask transport issues.
+- Any USB timeout, STALL pattern change, short read, malformed payload, or stale snapshot must be visible in logs and transport health.
+- Transport counters must be visible on the Web UI's advanced/debug pages.
+
+If transport health is degraded, the firmware must prefer missing/skipped publishes and explicit log errors over publishing questionable data.
 
 Required counters:
 
@@ -154,21 +162,25 @@ The web UI must make trust/provenance visible.
 
 #### Main Status Card
 
-Show:
+Keep the Web UI concepts already developed: high-level status, metrics, live logs, OTA/system controls, USB debug, and profile selection. Update the Status and Log pages so they only present UPS metrics that v0.4 can provide with high confidence.
+
+Show on the normal Status page:
 
 - UPS Status: `OL`, `OB DISCHRG`, `UNKNOWN`, etc.
-- Status Confidence: `confirmed`, `likely`, `derived`, or `unknown`
+- Status Confidence: only `confirmed` status may drive canonical status text.
 - Last Poll Age
 - Transport Health: `OK`, `DEGRADED`, `ERROR`
 - Active Profile: `APC Smart-UPS SMT2200 / NUT-style HID`
 
-If status is not confirmed, show a warning:
+Do not clutter the normal Status page with low-confidence data. Unconfirmed, likely, tentative, raw, and candidate values must be hidden unless Advanced Debug is enabled.
 
-`Status not descriptor-confirmed. Voltage readings may indicate line state, but UPS status is not mapped yet.`
+If status is not confirmed, show a clear warning:
+
+`Status not descriptor-confirmed. UPS status will remain UNKNOWN until NUT-style PresentStatus or APCLineFailCause mapping is validated.`
 
 #### Metrics Table
 
-Each metric row should show:
+Normal mode should show only high-confidence metrics. Advanced Debug mode should add provenance columns:
 
 - Display Name
 - Value
@@ -198,7 +210,30 @@ Add or extend USB Debug page with:
 - Raw report history for watched reports
 - Status field truth table before/during/after pull tests
 
-### R6: Documentation Requirements
+### R6: Publish Gating and Error Visibility
+
+MQTT must not publish data unless the firmware has a high level of confidence in that data.
+
+Rules:
+
+- Confirmed metrics may publish normally.
+- Likely/tentative/unmapped metrics must not publish to production Home Assistant topics by default.
+- If a metric is skipped because confidence is too low, stale, malformed, or transport health is degraded, log an explicit missed publish / data quality message.
+- Status changes must be definite. Do not publish `OL`, `OB`, `DISCHRG`, `LB`, `OVER`, or `RB` unless the backing HID path is confirmed.
+- If status cannot be confirmed, publish `UNKNOWN` or skip status with a clear log message, depending on the final HA integration choice.
+- Derived voltage-based line state may exist only as an Advanced Debug diagnostic, not as canonical UPS status.
+
+### R7: Linux/NUT Collection Baseline
+
+Jim will prepare a Linux machine for collection. The project should use Linux/NUT as the reference implementation because NUT is known to work with APC USB HID devices.
+
+Collection goal:
+
+- Capture NUT debug output and `upsc` values before/during/after line-power pull.
+- Compare NUT `ups.status`, `battery.voltage`, `input.voltage`, `input.transfer.reason`, and any APC-specific fields with ESP32 raw reports.
+- Use NUT-confirmed HID paths to promote ESP32 mappings from likely/tentative to confirmed.
+
+### R8: Documentation Requirements
 
 Update:
 
@@ -334,22 +369,30 @@ Parent/JARVIS verification after Claude:
 
 ---
 
-## Open Questions for Jim
+## Jim's Design Decisions
 
-1. Should v0.4 web UI show unconfirmed metrics by default with warning badges, or hide them unless “advanced/debug” is enabled?
-2. Should MQTT publish unconfirmed/likely values, or publish only confirmed values and separate `_candidate` topics?
-3. For `status`, should Home Assistant receive `UNKNOWN` until definitive mapping is found, or should it receive a derived fallback with a separate confidence field?
-4. Are you willing to temporarily connect the UPS USB to a Linux box and run NUT debug output for direct comparison, or should all discovery remain on ESP32?
-5. Should we add a dedicated “Power Pull Capture” web workflow before rewriting the descriptor parser?
+These are accepted requirements for the v0.4 refactor:
 
----
+1. Web UI visibility:
+   - Hide unconfirmed/likely/tentative metrics unless Advanced Debug is enabled.
+   - Maintain the existing Web UI concepts: Status page, logs, OTA/system controls, USB debug, and profile/config flows.
+   - Update Status and Log pages so UPS metrics match only what the firmware can provide confidently.
 
-## Recommended Decisions
+2. MQTT publication:
+   - Do not publish a metric unless there is a high level of confidence in the data.
+   - If a value is skipped because of confidence, stale data, malformed payload, or transport issue, show an error or missed-publish log entry.
 
-JARVIS recommendation:
+3. Status:
+   - Status changes must be definite.
+   - Do not publish or display canonical OB/OL/DISCHRG/LB/etc. from guessed bits or derived voltage fallback.
+   - If definitive status is not mapped yet, status must remain UNKNOWN or be skipped with explicit logging.
 
-- Web UI: show likely/unconfirmed values with badges.
-- MQTT: publish confirmed and likely numeric telemetry, but publish confidence topics too.
-- Status: publish `UNKNOWN` unless descriptor-confirmed; publish derived line state separately as `line_state_candidate` if needed.
-- Discovery: prefer one Linux/NUT debug capture if practical, because it gives us the known-good reference output.
-- Claude scope: start with Phase 2 and Phase 3 only. Do not ask Claude for the full descriptor parser in the first pass.
+4. Linux/NUT reference:
+   - Jim will prepare a Linux machine for collection.
+   - Use NUT as the reference behavior because NUT is known to work on Linux.
+   - ESP32 mapping confidence should be promoted only after comparison with NUT output and/or descriptor-confirmed fields.
+
+5. Claude implementation:
+   - Claude Code is likely the right worker for the rewrite.
+   - Do not start Claude with an open-ended rewrite prompt.
+   - First Claude scope should be bounded to transport counters, atomic snapshots, confidence gating, Web UI adjustments, and static NUT-style mapping scaffolding.

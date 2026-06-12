@@ -198,6 +198,7 @@ static const uint8_t smt2200_poll_reports[] = {
     0x09,  // SMT2200 PresentStatus-style bitfield; confirmed online sample 09 A8 4A
     0x0C,  // RemainingCapacity / battery charge; confirmed 0C 64 = 100%
     0x0A,  // RunTimeToEmpty; confirmed 0A C0 12 = 4800s
+    0x08,  // Load percent; confirmed 08 78 00 = 12.0% (/10)
     0x0D,  // Battery voltage-like report; confirmed 0D B0 13, scale pending
     0x0B,  // Voltage/config-like report; confirmed 0B 4A 15, scale pending
     0x11,  // RemainingCapacityLimit / low charge threshold; confirmed 11 0A = 10%

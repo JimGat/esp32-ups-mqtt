@@ -295,26 +295,18 @@ static void usb_debug_reset_command_queue(void)
 // a conservative tiny read; vendor reports keep their descriptor lengths.
 uint16_t usb_debug_safe_report_length(uint8_t report_id, uint16_t requested_length)
 {
-    uint16_t safe = 3;
+    // ESP-IDF/APC control reads are happier with a small padded transfer than
+    // the literal descriptor minimum. Known tiny reports that return 2-3 bytes
+    // are requested as 8 bytes; the actual returned length is still recorded.
+    // Large vendor reports keep their descriptor length. Unknown reports use 8
+    // rather than 64 to avoid the broad-sweep stall seen on report 0x08.
+    uint16_t safe = 8;
     switch (report_id) {
-        case 0x01: case 0x02: case 0x03: case 0x04: case 0x05:
-        case 0x0C: case 0x0E: case 0x0F: case 0x10: case 0x11:
-        case 0x14:
-            safe = 2;
-            break;
-        case 0x06: case 0x08: case 0x09: case 0x0A: case 0x0B:
-        case 0x0D: case 0x12:
-        case 0x8D: case 0x8E: case 0x92: case 0x93: case 0x94:
-            safe = 3;
-            break;
-        case 0x13:
-            safe = 4;
-            break;
         case 0x89: case 0x90: case 0x96:
             safe = 64;
             break;
         default:
-            safe = 3;
+            safe = 8;
             break;
     }
     if (requested_length > 0 && requested_length < safe) {

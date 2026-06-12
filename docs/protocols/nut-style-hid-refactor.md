@@ -432,3 +432,7 @@ The v0.4.4 debug-record expansion was rolled back to the small fixed stack-buffe
 ## v0.4.6-dev descriptor POST stability fix
 
 The descriptor dump HTTP handler no longer clears debug records or resets the debug command queue from the HTTP server context before enqueueing the descriptor command. Field testing on v0.4.5 showed the browser could sit forever on `Loading...` and the debug ring would contain only the pre-existing `interface claimed` record, indicating the POST did not complete the queue path. The handler now keeps the v0.4.3-style low-memory behavior, queues the descriptor command, and returns a plain text 200 response instead of a redirect.
+
+## SMT2200 report 0x05 probe evidence
+
+Field test after the 515-byte descriptor capture: safe manual `GET_REPORT` for report `0x05` returned the same two-byte payload for both Feature (`type=3`) and Input (`type=1`): `05 04`. This proves report `0x05` is readable, but the descriptor context around report `0x05` is transfer/config-style one-bit fields rather than a clean canonical `PresentStatus` source. Do not promote `0x05` directly to `OL/OB`; keep it as descriptor-backed evidence to compare against NUT/Linux and controlled line-state tests.

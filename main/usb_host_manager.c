@@ -96,6 +96,7 @@ static size_t runtime_map_count = 0;
 static uint32_t runtime_map_version = 0;
 static uint16_t runtime_map_descriptor_len = 0;
 static bool descriptor_first_report_requested = false;
+static volatile bool descriptor_first_descriptor_pending = false;
 static bool descriptor_first_poll_suppressed_logged = false;
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
@@ -624,6 +625,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                 ups_device = dev_hdl;
                 ups_connected = true;
                 descriptor_first_report_requested = false;
+                descriptor_first_descriptor_pending = false;
                 descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record connection event */
                 ups_transport_stats_record_connected();
@@ -634,14 +636,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                     ESP_LOGE(TAG, "Failed to claim interface: %s", esp_err_to_name(err));
                 } else {
                     ESP_LOGI(TAG, "✅ HID interface claimed successfully");
-                    usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "interface claimed");
-                    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: auto-queue HID report descriptor before any telemetry polling");
-                    esp_err_t desc_err = usb_debug_request_descriptor();
-                    if (desc_err == ESP_OK) {
-                        descriptor_first_report_requested = true;
-                    } else {
-                        ESP_LOGW(TAG, "DESCRIPTOR_FIRST: descriptor queue failed: %s", esp_err_to_name(desc_err));
-                    }
+                    ESP_LOGW(TAG, "DESCRIPTOR_FIRST: HID interface claimed; descriptor request pending for USB task context");
+                    descriptor_first_descriptor_pending = true;
                 }
 
                 // Get configuration descriptor to inspect endpoints (after claiming)
@@ -683,6 +679,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                 ups_connected = false;
                 ups_device = NULL;
                 descriptor_first_report_requested = false;
+                descriptor_first_descriptor_pending = false;
                 descriptor_first_poll_suppressed_logged = false;
                 /* v0.4: Record disconnection event */
                 ups_transport_stats_record_disconnected();
@@ -1188,7 +1185,7 @@ void usb_host_task(void *arg)
 
         // Log every 50 loops (5 seconds) to show task is alive
         if (loop_count % 50 == 0) {
-            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, descriptor_queued: %d, map_version: %lu, map_count: %u", loop_count, ups_connected, descriptor_first_report_requested, (unsigned long)runtime_map_version, (unsigned)runtime_map_count);
+            ESP_LOGI(TAG, "DEBUG: USB task alive, loop %d, UPS connected: %d, descriptor_pending: %d, descriptor_queued: %d, map_version: %lu, map_count: %u", loop_count, ups_connected, descriptor_first_descriptor_pending, descriptor_first_report_requested, (unsigned long)runtime_map_version, (unsigned)runtime_map_count);
         }
 
         // CRITICAL: Handle USB host LIBRARY events first (device connection/disconnection)
@@ -1225,6 +1222,17 @@ void usb_host_task(void *arg)
         } else if (err == ESP_OK) {
             error_count = 0;  // Reset error count on success
             ESP_LOGI(TAG, "DEBUG: USB client event received (not timeout)");
+        }
+
+        if (ups_connected && ups_device != NULL && descriptor_first_descriptor_pending && !descriptor_first_report_requested) {
+            descriptor_first_descriptor_pending = false;
+            ESP_LOGW(TAG, "DESCRIPTOR_FIRST: queueing HID report descriptor from USB task context");
+            esp_err_t desc_err = usb_debug_request_descriptor();
+            if (desc_err == ESP_OK) {
+                descriptor_first_report_requested = true;
+            } else {
+                ESP_LOGW(TAG, "DESCRIPTOR_FIRST: descriptor queue failed in USB task: %s", esp_err_to_name(desc_err));
+            }
         }
 
         // If UPS is connected, try to read HID reports.

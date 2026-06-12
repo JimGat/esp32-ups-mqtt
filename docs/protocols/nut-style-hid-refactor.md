@@ -507,3 +507,7 @@ Descriptor-first isolation rules for this phase:
 ## v0.4.10-dev HID map endpoint hardening
 
 `/api/hid-map` must be a safe diagnostic endpoint even before descriptor capture succeeds. It now builds a small non-chunked JSON response and logs request/response metadata so route registration or handler failures are visible in serial logs. HTTP route registration also logs success/failure for each route to catch max-handler or duplicate-route problems explicitly.
+
+## v0.4.11-dev USB callback discipline fix
+
+Field logs showed USB attach eventually reached the callback, but no descriptor processing followed. The descriptor-first request path must not do queue/mutex work from `usb_host_client_event_cb`. The callback now only marks a pending descriptor request; the USB task queues the descriptor command from normal task context after `usb_host_client_handle_events()` returns. This follows the ESP-IDF USB Host context rule and makes descriptor request processing visible via serial logs.

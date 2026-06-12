@@ -251,20 +251,37 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             break;
 
         case 0x0D:  // Battery voltage (interrupt endpoint)
-            // APC SMT2200 HID Quirk: The firmware occasionally switches from centivolts (/100) 
-            // to decivolts (/10) when the raw value drops below 1000. 
-            // A 48V pack will never be 4.2V (0x01A4), but 42.0V is a valid discharged state.
+            // APC SMT2200 HID quirk: Report 0x0D has been observed in multiple scales:
+            //   0D 54 15 -> 0x1554 / 100 = 54.60V pack voltage
+            //   0D 1C 02 -> 0x021C / 10  = 54.00V pack voltage
+            //   0D B0 04 -> 0x04B0 / 100 = 12.00V per 12V block; SMT2200 has 4 blocks in series => 48.00V pack
+            // Normalize to full 48V pack voltage and ignore implausible outliers instead of poisoning MQTT.
             ESP_LOGI(TAG, "   Type: Battery Voltage (interrupt)");
             if (length >= 3) {
                 uint16_t voltage_raw = data[1] | (data[2] << 8);
-                if (voltage_raw < 1000) {
-                    target->battery_voltage = (float)voltage_raw / 10.0f;
-                    ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 10) [decivolt quirk]", target->battery_voltage, voltage_raw);
+                float voltage = (float)voltage_raw / 100.0f;
+
+                if (voltage >= 10.0f && voltage <= 16.0f) {
+                    voltage *= 4.0f;
+                    target->battery_voltage = voltage;
+                    ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 100 × 4 blocks)", target->battery_voltage, voltage_raw);
+                    updated = true;
+                } else if (voltage_raw < 1000) {
+                    voltage = (float)voltage_raw / 10.0f;
+                    if (voltage >= 36.0f && voltage <= 65.0f) {
+                        target->battery_voltage = voltage;
+                        ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 10) [decivolt quirk]", target->battery_voltage, voltage_raw);
+                        updated = true;
+                    } else {
+                        ESP_LOGW(TAG, "   └─ Ignoring implausible battery voltage %.2fV from raw 0x%04X", voltage, voltage_raw);
+                    }
+                } else if (voltage >= 36.0f && voltage <= 65.0f) {
+                    target->battery_voltage = voltage;
+                    ESP_LOGI(TAG, "   └─ Battery: %.2fV pack (0x%04X / 100)", target->battery_voltage, voltage_raw);
+                    updated = true;
                 } else {
-                    target->battery_voltage = (float)voltage_raw / 100.0f;
-                    ESP_LOGI(TAG, "   └─ Battery: %.2fV (0x%04X / 100)", target->battery_voltage, voltage_raw);
+                    ESP_LOGW(TAG, "   └─ Ignoring implausible battery voltage %.2fV from raw 0x%04X", voltage, voltage_raw);
                 }
-                updated = true;
             }
             break;
 

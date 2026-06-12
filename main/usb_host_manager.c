@@ -63,6 +63,7 @@
 #include "usb_host_manager.h"
 #include "apc_hid_parser.h"
 #include "ups_hid_map.h"
+#include "hid_descriptor_parser.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -127,9 +128,30 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             snprintf(note, sizeof(note), "%s offset %d", include_setup ? "descriptor raw" : "descriptor payload", i);
             usb_debug_record_add(USB_DEBUG_REC_DESCRIPTOR, 0, 0, record_data + i, chunk, note);
         }
+        hid_descriptor_field_t fields[64];
+        size_t field_count = 0;
+        if (hid_descriptor_parse(transfer->data_buffer + setup_len, payload_len,
+                                 fields, sizeof(fields) / sizeof(fields[0]), &field_count)) {
+            ESP_LOGI(TAG, "NUT-HID: descriptor resolver found %u fields", (unsigned)field_count);
+            for (size_t f = 0; f < field_count; f++) {
+                if (fields[f].nut_name[0] != '\0' || strstr(fields[f].hid_path, "PresentStatus") != NULL) {
+                    ESP_LOGI(TAG, "NUT-HID: %s report=0x%02X bit=%u size=%u path=%s nut=%s",
+                             hid_descriptor_report_type_str(fields[f].type), fields[f].report_id,
+                             fields[f].bit_offset, fields[f].bit_size, fields[f].hid_path, fields[f].nut_name);
+                    char note[160];
+                    const char *field_name = fields[f].nut_name[0] ? fields[f].nut_name : fields[f].hid_path;
+                    snprintf(note, sizeof(note), "field r=0x%02X b=%u s=%u %s",
+                             fields[f].report_id, fields[f].bit_offset, fields[f].bit_size, field_name);
+                    usb_debug_record_add(USB_DEBUG_REC_EVENT, fields[f].report_id, 0, NULL, 0, note);
+                }
+            }
+        } else {
+            ESP_LOGW(TAG, "NUT-HID: descriptor parser failed; keeping raw dump only");
+            usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, 0, NULL, 0, "descriptor parse failed");
+        }
         char summary[96];
-        snprintf(summary, sizeof(summary), "descriptor complete payload=%d raw=%d view=%s",
-                 payload_len, transfer->actual_num_bytes, include_setup ? "raw-control" : "payload-only");
+        snprintf(summary, sizeof(summary), "descriptor complete payload=%d raw=%d fields=%u",
+                 payload_len, transfer->actual_num_bytes, (unsigned)field_count);
         usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, summary);
     } else {
         ESP_LOGE(TAG, "Failed to get HID Report Descriptor: %d", transfer->status);

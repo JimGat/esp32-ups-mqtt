@@ -409,3 +409,10 @@ Important runtime behavior:
 - HTTP `/status` and `/metrics` read atomic metric snapshots and expose active profile, status confidence, transport health, and last poll age.
 - Linux/NUT baseline capture is still required before promoting SMT2200 status paths from unmapped/likely to confirmed.
 
+## v0.4.2-dev descriptor detection pass
+
+This pass adds a small host-tested HID report descriptor parser (`main/hid_descriptor_parser.*`) following the NUT strategy of treating report IDs as transport details and resolving semantic HID usage paths first. The parser tracks Usage Page, Usage, Collection path, Report ID, Report Type, Report Size/Count, bit offsets, logical ranges, and unit exponent.
+
+When a HID report descriptor is dumped through USB Debug mode, firmware now parses the payload-only descriptor and logs NUT-relevant fields such as `UPS.PowerSummary.PresentStatus.*`, `UPS.PowerSummary.RemainingCapacity`, `UPS.Input.Voltage`, and `UPS.Battery.Voltage` with report ID/bit offset/size provenance. It also records concise `field ...` events in the USB debug ring.
+
+This is detection/provenance only: SMT2200 canonical status still remains `UNKNOWN` until a descriptor-resolved status field is validated against Linux/NUT and/or a controlled pull test.

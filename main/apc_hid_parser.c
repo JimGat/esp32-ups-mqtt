@@ -149,15 +149,27 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
             }
             break;
 
-        case 0x08:  // Battery nominal voltage (UPS.PowerSummary.ConfigVoltage)
-            ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
-            if (length >= 3) {
-                // 16-bit value with Exponent = -2, so divide by 100
-                // Raw data example: 08 B0 04 = 0x04B0 = 1200 / 100 = 12V
-                uint16_t voltage_raw = data[1] | (data[2] << 8);
-                target->battery_nominal_voltage = (float)voltage_raw / 100.0f;
-                ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.1fV", voltage_raw, target->battery_nominal_voltage);
-                updated = true;
+        case 0x08:
+            if (is_smt2200_profile()) {
+                ESP_LOGI(TAG, "   Type: SMT2200 Load Percent");
+                if (length >= 3) {
+                    // Confirmed Jim SMT2200 sample: 08 78 00 = 120 / 10 = 12.0%,
+                    // matching UPS panel Load Power 12% / 237W.
+                    uint16_t load_raw = data[1] | (data[2] << 8);
+                    target->load_percent = (float)load_raw / 10.0f;
+                    ESP_LOGI(TAG, "   └─ Load: %.1f%% (0x%04X / 10)", target->load_percent, load_raw);
+                    updated = true;
+                }
+            } else {
+                ESP_LOGI(TAG, "   Type: Battery Nominal Voltage");
+                if (length >= 3) {
+                    // 16-bit value with Exponent = -2, so divide by 100
+                    // Raw data example: 08 B0 04 = 0x04B0 = 1200 / 100 = 12V
+                    uint16_t voltage_raw = data[1] | (data[2] << 8);
+                    target->battery_nominal_voltage = (float)voltage_raw / 100.0f;
+                    ESP_LOGI(TAG, "   └─ Raw: 0x%04X → %.1fV", voltage_raw, target->battery_nominal_voltage);
+                    updated = true;
+                }
             }
             break;
 

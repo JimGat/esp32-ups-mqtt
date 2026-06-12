@@ -207,7 +207,7 @@ SMT2200 report `0x09` online sample `09 A8 4A` sets bits `3, 5, 7, 9, 11, 14`. E
 
 Jim confirmed the physical SMT2200 state for online sample `09 A8 4A`: the unit was online, charging, carrying about 14% load, not overloaded, and did not need battery replacement. Therefore v0.3.26-dev treats bit 3 as `OL` and bit 5 as `CHRG`. Bits 7 and 11 remain unassigned for this model and must not be rendered as `OVER` or `RB` from this sample.
 
-## v0.3.31 USB Debug Safe Enumeration Notes
+## v0.3.32 USB Debug Safe Enumeration Notes
 
 The USB debug API now has a safer manual request path for protocol discovery:
 
@@ -218,10 +218,21 @@ The USB debug API now has a safer manual request path for protocol discovery:
 
 Use `request-safe` for automated enumeration. Reserve raw `/api/usb-debug/request` for one-off low-level USB experiments where the caller deliberately controls the exact transfer length.
 
-## v0.3.31 USB Debug Handler Footprint Note
+## v0.3.32 USB Debug Handler Footprint Note
 
 The records handlers were reduced to small batches to avoid excessive ESP32 HTTP task stack use while serving debug records. Use the `since` query parameter to page through records in multiple calls rather than asking one handler invocation to format a large capture buffer.
 
-## v0.3.31 Safe GET_REPORT Length Note
+## v0.3.32 Safe GET_REPORT Length Note
 
 Safe manual GET_REPORT requests now use an 8-byte padded request for normal small reports instead of the literal 2-3 byte descriptor minimum. The SMT2200/ESP-IDF control path returned known reports successfully with 8-byte requests but could re-enumerate or fail when asked for very short control-read lengths. Vendor 63-byte reports remain clamped to 64 bytes.
+
+## v0.3.32 SMT2200 Load Percent Mapping
+
+Safe enumeration found two load-correlated reports while the UPS front panel showed Load Power 12% / 237W and Load VA 11% / 242VA:
+
+| Report | Response | Decode | Interpretation |
+|---|---|---|---|
+| `0x08` Input/Feature | `08 78 00` | little-endian `120`, scale `/10` = `12.0%` | Primary SMT2200 `load_percent` mapping. |
+| `0x07` Input/Feature | `07 0C 00` | little-endian `12` | Corroborating direct load-like value; preserved as protocol evidence but not yet used for parser output. |
+
+Firmware v0.3.32 adds report `0x08` to the SMT2200 poll list and parses it as load percent.

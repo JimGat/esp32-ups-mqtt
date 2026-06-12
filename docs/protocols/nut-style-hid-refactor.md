@@ -446,3 +446,18 @@ Online/on-mains baseline probes while in Active Debug:
 - `GET_REPORT type=3 report=0x14 len=8 safe` returned `14 02`. Existing normal polling also returns `14 02`; descriptor context includes `NeedReplacement` and audible-alarm/beeper semantics, so this remains evidence only.
 
 Do not promote these baseline values to canonical `OL/OB/CHRG/RB` until compared against Linux/NUT or a controlled line-state/battery-state change.
+
+## SMT2200 controlled AC-pull probe comparison
+
+Controlled line-state test comparing on-mains vs AC input pulled while in Active Debug:
+
+| Report | Type | On mains | AC pulled | Changed? |
+|---|---:|---|---|---|
+| `0x05` | Feature `3` | `05 04` | `05 04` | no |
+| `0x05` | Input `1` | `05 04` | `05 04` | no |
+| `0x12` | Feature `3` | `12 FF FF` | `12 FF FF` | no |
+| `0x12` | Input `1` | `12 FF FF` | `12 FF FF` | no |
+| `0x14` | Feature `3` | `14 02` | `14 02` | no |
+| `0x14` | Input `1` | `14 02` | `14 02` | no |
+
+Result: reports `0x05`, `0x12`, and `0x14` did not respond to AC line-state changes and must not be used to infer canonical `OL`/`OB`. Continue to treat report `0x09` as raw/unmapped and status as `UNKNOWN` until a changing descriptor-backed line-state source is identified. The already-confirmed useful AC-pull signals remain measured telemetry like input voltage (`0x0D`) rather than canonical UPS status.

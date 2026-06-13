@@ -118,6 +118,7 @@ static hid_descriptor_field_t full_hid_fields[96];
 static nut_runtime_map_entry_t full_hid_runtime_map[48];
 static volatile int64_t next_input_report_poll_at_ms = 0;
 static volatile bool input_report_pending = false;
+static volatile uint8_t current_poll_report_id = 0x07;
 
 
 static bool usb_diag_heap_checkpoint(const char *stage)
@@ -261,17 +262,29 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
         int payload_len = transfer->actual_num_bytes - setup_len;
         if (payload_len < 0) payload_len = 0;
         
-        ESP_LOGI(TAG, "✅ HID Input Report received: raw=%d payload=%d", transfer->actual_num_bytes, payload_len);
-        
-        // Dump first 32 bytes of payload for verification
         const uint8_t *data = transfer->data_buffer + setup_len;
-        char line[96];
-        int off = 0;
-        for (int j = 0; j < 32 && j < payload_len; j++) {
-            off += snprintf(&line[off], sizeof(line) - off, "%02x ", data[j]);
+        if (payload_len >= 2) {
+            uint8_t report_id = data[0];
+            if (report_id == 0x07 && payload_len >= 3) {
+                int val = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x07 (Status/Flag) = %d", val);
+            } else if (report_id == 0x08 && payload_len >= 2) {
+                int load = data[1]; // APC load is typically 1 byte percentage
+                ESP_LOGI(TAG, "📊 TELEMETRY: UPS Load = %d%%", load);
+            } else if (report_id == 0x0A && payload_len >= 3) {
+                int runtime = data[1] | (data[2] << 8); // 16-bit little-endian minutes
+                ESP_LOGI(TAG, "📊 TELEMETRY: Est. Runtime = %d minutes", runtime);
+            } else {
+                char line[96];
+                int off = 0;
+                for (int j = 0; j < 16 && j < payload_len; j++) {
+                    off += snprintf(&line[off], sizeof(line) - off, "%02x ", data[j]);
+                }
+                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x%02X raw: %s", report_id, line);
+            }
+        } else {
+            ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d", payload_len);
         }
-        ESP_LOGI(TAG, "INPUT-RAW %s", line);
-
         input_report_pending = false;
     } else {
         ESP_LOGW(TAG, "⚠️ HID Input Report failed: %d", transfer->status);
@@ -1549,11 +1562,15 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
             }
         }
 
-        // Periodic Input Report Polling (Report ID 0x07 for battery runtime, based on NUT map)
+        // Periodic Input Report Polling (Cycle through 0x07, 0x08, 0x0A based on NUT map)
         if (full_hid_descriptor_processed && ups_connected && ups_device != NULL && !input_report_pending) {
             if (now_ms >= next_input_report_poll_at_ms) {
-                request_hid_input_report(ups_device, 0, 0x07);
-                next_input_report_poll_at_ms = now_ms + 30000; // Poll every 30 seconds
+                request_hid_input_report(ups_device, 0, current_poll_report_id);
+                // Cycle: 0x07 -> 0x08 -> 0x0A -> 0x07
+                if (current_poll_report_id == 0x07) current_poll_report_id = 0x08;
+                else if (current_poll_report_id == 0x08) current_poll_report_id = 0x0A;
+                else current_poll_report_id = 0x07;
+                next_input_report_poll_at_ms = now_ms + 10000; // Poll each report every 10 seconds (30s total cycle)
             }
         }
 

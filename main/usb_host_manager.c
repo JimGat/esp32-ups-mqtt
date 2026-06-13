@@ -118,7 +118,8 @@ static hid_descriptor_field_t full_hid_fields[96];
 static nut_runtime_map_entry_t full_hid_runtime_map[48];
 static volatile int64_t next_input_report_poll_at_ms = 0;
 static volatile bool input_report_pending = false;
-static volatile uint8_t current_poll_report_id = 0x07;
+static const uint8_t poll_reports[] = {0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x12, 0x14};
+static volatile size_t current_poll_idx = 0;
 
 
 static bool usb_diag_heap_checkpoint(const char *stage)
@@ -264,7 +265,6 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
         
         const uint8_t *data = transfer->data_buffer + setup_len;
         
-        // Always log raw hex for forensics
         char hex_line[128];
         int hex_off = 0;
         int dump_len = (payload_len < 16) ? payload_len : 16;
@@ -275,20 +275,33 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
         if (payload_len >= 2) {
             uint8_t report_id = data[0];
             if (report_id == 0x07 && payload_len >= 3) {
-                int val = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x07 (Status/Flag) = %d [RAW: %s]", val, hex_line);
+                uint16_t flags = data[1] | (data[2] << 8);
+                bool ac_present = (flags & 0x0010) != 0; // Bit 4 is typically ACPresent in HID UPS spec
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (ACPresent=%s) [RAW: %s]", 
+                         flags, ac_present ? "ON LINE" : "ON BATTERY", hex_line);
             } else if (report_id == 0x08 && payload_len >= 3) {
-                // APC HID Report 0x08 is Load scaled by 10 (Logical Min=120, Max=1380)
                 int raw_load = data[1] | (data[2] << 8);
-                float load_pct = raw_load / 10.0f;
-                ESP_LOGI(TAG, "📊 TELEMETRY: UPS Load = %.1f%% (raw=%d) [RAW: %s]", load_pct, raw_load, hex_line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load = %.1f%% (raw=%d) [RAW: %s]", raw_load / 10.0f, raw_load, hex_line);
+            } else if (report_id == 0x09 && payload_len >= 3) {
+                int raw_val = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x09 Nominal/Flow = %d [RAW: %s]", raw_val, hex_line);
             } else if (report_id == 0x0A && payload_len >= 3) {
-                // APC HID Report 0x0A is Estimated Runtime in SECONDS
-                int raw_seconds = data[1] | (data[2] << 8);
-                int mins = raw_seconds / 60;
-                ESP_LOGI(TAG, "📊 TELEMETRY: Est. Runtime = %d min (%d sec) [RAW: %s]", mins, raw_seconds, hex_line);
+                int raw_sec = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0A Runtime = %d min (%d sec) [RAW: %s]", raw_sec / 60, raw_sec, hex_line);
+            } else if (report_id == 0x0C && payload_len >= 3) {
+                int raw_cap = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0C Battery Capacity = %d%% [RAW: %s]", raw_cap, hex_line);
+            } else if (report_id == 0x0D && payload_len >= 3) {
+                int raw_sec = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time on Battery = %d min (%d sec) [RAW: %s]", raw_sec / 60, raw_sec, hex_line);
+            } else if (report_id == 0x12 && payload_len >= 3) {
+                int raw_status = data[1] | (data[2] << 8);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %d [RAW: %s]", raw_status, hex_line);
+            } else if (report_id == 0x14 && payload_len >= 2) {
+                int raw_replace = data[1];
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %d (1=No, 2=Yes) [RAW: %s]", raw_replace, hex_line);
             } else {
-                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x%02X [RAW: %s]", report_id, hex_line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x%02X Unknown [RAW: %s]", report_id, hex_line);
             }
         } else {
             ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d [RAW: %s]", payload_len, hex_line);
@@ -1570,15 +1583,14 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
             }
         }
 
-        // Periodic Input Report Polling (Cycle through 0x07, 0x08, 0x0A based on NUT map)
+        // Periodic Input Report Polling (Complete HID UPS Golden Set)
         if (full_hid_descriptor_processed && ups_connected && ups_device != NULL && !input_report_pending) {
             if (now_ms >= next_input_report_poll_at_ms) {
-                request_hid_input_report(ups_device, 0, current_poll_report_id);
-                // Cycle: 0x07 -> 0x08 -> 0x0A -> 0x07
-                if (current_poll_report_id == 0x07) current_poll_report_id = 0x08;
-                else if (current_poll_report_id == 0x08) current_poll_report_id = 0x0A;
-                else current_poll_report_id = 0x07;
-                next_input_report_poll_at_ms = now_ms + 10000; // Poll each report every 10 seconds (30s total cycle)
+                uint8_t target_report = poll_reports[current_poll_idx];
+                request_hid_input_report(ups_device, 0, target_report);
+                
+                current_poll_idx = (current_poll_idx + 1) % (sizeof(poll_reports) / sizeof(poll_reports[0]));
+                next_input_report_poll_at_ms = now_ms + 4000; // 4s per report = 32s total cycle
             }
         }
 

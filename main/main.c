@@ -403,7 +403,7 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.43 USB-HID-REPORT-DESCRIPTOR-FULL with dynamic metrics wired to Web UI baseline:
+    // v0.4.44 USB-HID-REPORT-DESCRIPTOR-FULL with corrected APC flag interpretations and capacity parsing:
     // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
     // Waits 30s, captures full 515-byte HID descriptor, dumps/parses NUT map, dynamically cycles through 8 core HID UPS reports, and wires them to the central metrics struct to drive the new 8-item Web UI baseline.
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: claim interface then request full 515-byte HID report descriptor from task");

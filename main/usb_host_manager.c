@@ -287,10 +287,11 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
             uint8_t report_id = data[0];
             if (report_id == 0x07 && payload_len >= 3) {
                 uint16_t flags = data[1] | (data[2] << 8);
-                bool ac_present = (flags & 0x0010) != 0;
-                dyn_ac_present = ac_present ? 1 : 0;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (ACPresent=%s) [RAW: %s]", 
-                         flags, ac_present ? "ON LINE" : "ON BATTERY", hex_line);
+                // Bit 3 (0x08) is Online, Bit 2 (0x04) is often persistent Battery Present
+bool on_line = (flags & 0x0008) != 0;
+dyn_ac_present = on_line ? 1 : 0;
+ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (Power=%s) [RAW: %s]", 
+         flags, on_line ? "ON LINE" : "ON BATTERY", hex_line);
             } else if (report_id == 0x08 && payload_len >= 3) {
                 int raw_load = data[1] | (data[2] << 8);
                 dyn_load_pct = raw_load / 10.0f;
@@ -303,22 +304,25 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
                 int raw_sec = data[1] | (data[2] << 8);
                 dyn_runtime_min = raw_sec / 60;
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x0A Runtime = %d min (%d sec) [RAW: %s]", dyn_runtime_min, raw_sec, hex_line);
-            } else if (report_id == 0x0C && payload_len >= 3) {
-                int raw_cap = data[1] | (data[2] << 8);
+            } else if (report_id == 0x0C && payload_len >= 2) {
+                // APC often sends capacity as a single byte
+                int raw_cap = data[1];
                 dyn_battery_capacity = raw_cap;
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x0C Battery Capacity = %d%% [RAW: %s]", dyn_battery_capacity, hex_line);
             } else if (report_id == 0x0D && payload_len >= 3) {
                 int raw_sec = data[1] | (data[2] << 8);
                 dyn_time_on_batt_min = raw_sec / 60;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time on Battery = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Last Time on Battery (Latched) = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
             } else if (report_id == 0x12 && payload_len >= 3) {
                 int raw_status = data[1] | (data[2] << 8);
                 dyn_charge_status = raw_status;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %d [RAW: %s]", dyn_charge_status, hex_line);
+                const char* charge_str = (dyn_charge_status == 65535) ? "Unknown/N/A" : ((dyn_charge_status == 2) ? "Charging" : "Other");
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %s (%d) [RAW: %s]", charge_str, dyn_charge_status, hex_line);
             } else if (report_id == 0x14 && payload_len >= 2) {
                 int raw_replace = data[1];
                 dyn_replace_batt = raw_replace;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %d (1=No, 2=Yes) [RAW: %s]", dyn_replace_batt, hex_line);
+                const char* replace_str = (dyn_replace_batt == 1) ? "No" : ((dyn_replace_batt == 2) ? "Yes" : "Unknown");
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %s (%d) [RAW: %s]", replace_str, dyn_replace_batt, hex_line);
             } else {
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x%02X Unknown [RAW: %s]", report_id, hex_line);
             }

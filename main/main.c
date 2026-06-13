@@ -135,6 +135,13 @@ static void mqtt_publish_task(void *arg)
     mqtt_publish_discovery("driver_state", "Driver State", NULL, NULL);
     mqtt_publish_discovery("power_failure", "Power Failure", NULL, NULL);
 
+    // Dynamic HID Baseline Metrics Discovery (Universal Manufacturer Support)
+    mqtt_publish_discovery("dynamic_ac_present", "Power State", NULL, "enum");
+    mqtt_publish_discovery("dynamic_load_percent", "Dynamic Load", "%", "power_factor");
+    mqtt_publish_discovery("dynamic_runtime_min", "Dynamic Runtime", "min", "duration");
+    mqtt_publish_discovery("dynamic_battery_capacity", "Battery Capacity", "%", "battery");
+    mqtt_publish_discovery("dynamic_battery_health", "Battery Health", NULL, "enum");
+
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     while (1) {
@@ -264,6 +271,24 @@ static void mqtt_publish_task(void *arg)
                 if (strlen(metrics->power_failure_status) > 0) {
                     mqtt_publish_string("power_failure", metrics->power_failure_status);
                 }
+
+                // Publish Dynamic HID Baseline Metrics
+                const char* dyn_ac = (metrics->dynamic_ac_present == 1) ? "ON LINE" : "ON BATTERY";
+                ESP_LOGI(TAG, "   ⚡ dynamic_ac_present → %s", dyn_ac);
+                mqtt_publish_string("dynamic_ac_present", dyn_ac);
+
+                ESP_LOGI(TAG, "   📊 dynamic_load_percent → %.1f%%", metrics->dynamic_load_percent);
+                mqtt_publish_metric("dynamic_load_percent", metrics->dynamic_load_percent, "%%");
+
+                ESP_LOGI(TAG, "   ⏱️  dynamic_runtime_min → %d min", metrics->dynamic_runtime_min);
+                mqtt_publish_metric("dynamic_runtime_min", metrics->dynamic_runtime_min, "min");
+
+                ESP_LOGI(TAG, "   🔋 dynamic_battery_capacity → %d%%", metrics->dynamic_battery_capacity);
+                mqtt_publish_metric("dynamic_battery_capacity", metrics->dynamic_battery_capacity, "%%");
+
+                const char* health_str = (metrics->dynamic_replace_battery == 3) ? "REPLACE" : ((metrics->dynamic_replace_battery == 2) ? "GOOD" : "UNKNOWN");
+                ESP_LOGI(TAG, "   🛡️  dynamic_battery_health → %s", health_str);
+                mqtt_publish_string("dynamic_battery_health", health_str);
 
                 ESP_LOGI(TAG, "");
                 ESP_LOGI(TAG, "✅ MQTT PUBLISH COMPLETE");
@@ -403,7 +428,7 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.45 USB-HID-REPORT-DESCRIPTOR-FULL with corrected 3-state Battery Health mapping (2=Good):
+    // v0.4.46 USB-HID-REPORT-DESCRIPTOR-FULL with dynamic HID metrics wired to MQTT event and periodic state payloads:
     // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
     // Waits 30s, captures full 515-byte HID descriptor, dumps/parses NUT map, dynamically cycles through 8 core HID UPS reports, and wires them to the central metrics struct to drive the new 8-item Web UI baseline.
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: claim interface then request full 515-byte HID report descriptor from task");

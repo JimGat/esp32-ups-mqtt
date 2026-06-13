@@ -242,6 +242,9 @@ esp_err_t mqtt_publish_power_event(const char *event_name, const ups_metrics_t *
     char payload[512];
 
     snprintf(topic, sizeof(topic), "ups_bridge/%s/events/power", device_id);
+    const char* dyn_health = (metrics->dynamic_replace_battery == 3) ? "REPLACE" : ((metrics->dynamic_replace_battery == 2) ? "GOOD" : "UNKNOWN");
+    const char* dyn_ac = (metrics->dynamic_ac_present == 1) ? "ON LINE" : "ON BATTERY";
+
     snprintf(payload, sizeof(payload),
              "{"
              "\"event\":\"%s\","
@@ -254,7 +257,12 @@ esp_err_t mqtt_publish_power_event(const char *event_name, const ups_metrics_t *
              "\"input_voltage\":%.2f,"
              "\"battery_charge\":%.2f,"
              "\"battery_runtime_seconds\":%.0f,"
-             "\"load_percent\":%.2f"
+             "\"load_percent\":%.2f,"
+             "\"dynamic_ac_present\":\"%s\","
+             "\"dynamic_load_percent\":%.1f,"
+             "\"dynamic_runtime_min\":%d,"
+             "\"dynamic_battery_capacity\":%d,"
+             "\"dynamic_battery_health\":\"%s\""
              "}",
              event_name,
              device_id,
@@ -266,7 +274,12 @@ esp_err_t mqtt_publish_power_event(const char *event_name, const ups_metrics_t *
              metrics->input_voltage,
              metrics->battery_charge,
              metrics->battery_runtime,
-             metrics->load_percent);
+             metrics->load_percent,
+             dyn_ac,
+             metrics->dynamic_load_percent,
+             metrics->dynamic_runtime_min,
+             metrics->dynamic_battery_capacity,
+             dyn_health);
 
     int msg_id = esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 1, 0);
 

@@ -624,32 +624,17 @@ Interpretation:
 - If ping/web break here, root cause is HID interface claim/release.
 - If ping/web remain solid and claim/release logs ESP_OK, root cause is later: HID report descriptor control transfer submission/callback.
 
-## v0.4.27-dev: interface-claim diagnostic with persistent result heartbeat
+## v0.4.30-dev: interface-claim diagnostic with persistent result heartbeat
 
 v0.4.26 showed `new_dev=1` in heartbeat but the short callback burst logs were not visible in the provided output. This build keeps the same interface-claim-only boundary and stores every callback step result in persistent diagnostic state. Each 10-second heartbeat now includes VID/PID, interface count/class, and result codes for open, device descriptor, config descriptor, claim, release, and close.
 
 This prevents a dropped log burst from hiding whether the interface claim path succeeded.
 
-## v0.4.28-dev: HID report descriptor request-only diagnostic
+## v0.4.30-dev: recovery to last-known-good interface-claim boundary
 
-v0.4.27 proved Wi-Fi/HTTP remains solid through HID interface claim/release. This build advances to the suspected boundary:
-- On NEW_DEV, callback opens the device, reads descriptors, and claims HID interface 0.
-- The device is intentionally left open/claimed.
-- The USB task, not the callback, submits exactly one GET_DESCRIPTOR(HID Report, type 0x22) control transfer.
-- No telemetry polling or MQTT is enabled.
-- Heartbeat persists submit/completion status and descriptor lengths.
+v0.4.28 and v0.4.29 both destabilized networking / apparent reboot loops when the HID report descriptor request path was armed. v0.4.29 used only a 64-byte request and status-only callback, yet the unit became unreachable before a visible NEW_DEV event. This recovery build returns to the last-known-good v0.4.27 boundary: open device, read device/config descriptors, claim HID interface, release HID interface, close device, and report persistent step results in heartbeat.
 
-Interpretation:
-- If ping/web break here, the root cause is the HID report descriptor control transfer path or descriptor callback/log volume.
-- If ping/web remain solid and payload length is ~515, descriptor-first startup is safe and the next step is to integrate this path cleanly.
-
-## v0.4.29-dev: minimal 64-byte HID report descriptor diagnostic
-
-v0.4.28 caused severe network loss / apparent reboot shortly after enabling the full HID report descriptor path. This build keeps the same claimed-interface boundary but reduces the descriptor step:
-- Request only 64 bytes (`wLength=64`) of HID report descriptor data.
-- Callback records only transfer status and lengths.
-- No hex dump, descriptor parser, NUT runtime map, telemetry polling, or MQTT.
-
-Interpretation:
-- If this still destabilizes/reboots, the issue is control transfer submission/completion itself.
-- If this remains stable, the issue is likely the full 1024-byte transfer length or heavy callback logging/parsing path.
+Interpretation so far:
+- Stable through HID interface claim/release.
+- Unstable when HID report descriptor request machinery is armed.
+- Next investigation should avoid arming/submitting HID descriptor control transfers in the live Wi-Fi build until a raw serial boot log/reset reason confirms whether this is reboot, watchdog, or USB task starvation.

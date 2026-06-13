@@ -629,3 +629,16 @@ Interpretation:
 v0.4.26 showed `new_dev=1` in heartbeat but the short callback burst logs were not visible in the provided output. This build keeps the same interface-claim-only boundary and stores every callback step result in persistent diagnostic state. Each 10-second heartbeat now includes VID/PID, interface count/class, and result codes for open, device descriptor, config descriptor, claim, release, and close.
 
 This prevents a dropped log burst from hiding whether the interface claim path succeeded.
+
+## v0.4.28-dev: HID report descriptor request-only diagnostic
+
+v0.4.27 proved Wi-Fi/HTTP remains solid through HID interface claim/release. This build advances to the suspected boundary:
+- On NEW_DEV, callback opens the device, reads descriptors, and claims HID interface 0.
+- The device is intentionally left open/claimed.
+- The USB task, not the callback, submits exactly one GET_DESCRIPTOR(HID Report, type 0x22) control transfer.
+- No telemetry polling or MQTT is enabled.
+- Heartbeat persists submit/completion status and descriptor lengths.
+
+Interpretation:
+- If ping/web break here, the root cause is the HID report descriptor control transfer path or descriptor callback/log volume.
+- If ping/web remain solid and payload length is ~515, descriptor-first startup is safe and the next step is to integrate this path cleanly.

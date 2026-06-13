@@ -660,3 +660,7 @@ v0.4.34 field testing showed hot-plug after Wi-Fi/HTTP stabilization can behave 
 ## v0.4.36-dev: exact allocation with 60s gated cleanup
 
 v0.4.35 proved the exact-size 64-byte HID report descriptor control transfer can complete and remain heap-stable when the completed transfer/device are intentionally retained. v0.4.36 keeps exact allocation and the 30s pre-submit settle, then waits 60s after callback before attempting gated cleanup: transfer free, interface release, and device close. Cleanup is skipped if heap integrity is BAD at the gate.
+
+## v0.4.37-dev: full 515-byte HID descriptor capture and NUT map parse
+
+v0.4.37 advances from the stable 64-byte exact-allocation diagnostic to the full APC SMT2200 HID report descriptor length of 515 bytes. The callback only copies the returned payload into a static buffer and records status. The USB task then emits the descriptor hex dump and runs the HID descriptor parser plus NUT runtime map builder outside callback context. The completed transfer/device are intentionally retained for this diagnostic to preserve the stability observed in v0.4.35.

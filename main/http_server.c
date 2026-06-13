@@ -319,7 +319,7 @@ static esp_err_t root_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "<form method='POST' action='/save'>");
 
     /* WiFi */
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<div class='card'><h2>WiFi</h2>"
         "<label>SSID</label><input name='wifi_ssid' value='%s'>"
         "<label>Password</label><input name='wifi_pass' type='password' value='%s'>"
@@ -329,13 +329,13 @@ static esp_err_t root_handler(httpd_req_t *req)
 
     /* MQTT */
     httpd_resp_sendstr_chunk(req, "<div class='card'><h2>MQTT</h2>");
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<label>Broker URL</label><input name='mqtt_url' value='%s'>", url_esc);
     httpd_resp_sendstr_chunk(req, buf);
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<label>Username</label><input name='mqtt_user' value='%s'>", user_esc);
     httpd_resp_sendstr_chunk(req, buf);
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<label>Password</label><input name='mqtt_pass' type='password' value='%s'>",
         current_config->mqtt_pass);
     httpd_resp_sendstr_chunk(req, buf);
@@ -351,7 +351,7 @@ static esp_err_t root_handler(httpd_req_t *req)
     /* Device Label */
     char label_esc[128];
     html_escape(label_esc, current_config->device_label, sizeof(label_esc));
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<div class='card'><h2>Device Identification</h2>"
         "<label>Device Label (e.g., 'UPS Server Room')</label><input name='device_label' value='%s'>"
         "<label>UPS Make / Model Profile</label>"
@@ -369,7 +369,7 @@ static esp_err_t root_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, buf);
 
     /* Interval */
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<div class='card'><h2>Publish Interval</h2>"
         "<label>Seconds</label>"
         "<input name='interval' type='number' min='5' max='300' value='%lu'>"
@@ -406,7 +406,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         "<div class='card'><h2>UPS Metrics</h2><table id='mtbl'>");
 
     if (m->valid) {
-        snprintf(buf, sizeof(buf),
+        snprintf(buf, 1024,
             "<tr><th>Status</th><td class='val %s'>%s</td></tr>"
             "<tr><th>Status Confidence</th><td class='val'>%s</td></tr>",
             m->status.online ? "online" : "offline",
@@ -414,7 +414,7 @@ static esp_err_t status_handler(httpd_req_t *req)
             m->status_confidence);
         httpd_resp_sendstr_chunk(req, buf);
 
-        snprintf(buf, sizeof(buf),
+        snprintf(buf, 1024,
             "<tr><th>Active Profile</th><td class='val'>%s / NUT-style HID</td></tr>"
             "<tr><th>Transport Health</th><td class='val'>%s</td></tr>"
             "<tr><th>Last Poll Age</th><td class='val'>%lu ms</td></tr>",
@@ -423,7 +423,7 @@ static esp_err_t status_handler(httpd_req_t *req)
             (unsigned long)last_poll_age_ms);
         httpd_resp_sendstr_chunk(req, buf);
 
-        snprintf(buf, sizeof(buf),
+        snprintf(buf, 1024,
             "<tr><th>Battery Charge</th><td class='val'>%.0f%%</td></tr>"
             "<tr><th>Battery Voltage</th><td class='val'>%.1f V</td></tr>"
             "<tr><th>Battery Runtime</th><td class='val'>%.0f s (%.1f min)</td></tr>",
@@ -432,7 +432,7 @@ static esp_err_t status_handler(httpd_req_t *req)
             m->battery_runtime, m->battery_runtime / 60.0f);
         httpd_resp_sendstr_chunk(req, buf);
 
-        snprintf(buf, sizeof(buf),
+        snprintf(buf, 1024,
             "<tr><th>Input Voltage</th><td class='val'>%.0f V</td></tr>"
             "<tr><th>Load</th><td class='val'>%.0f%%</td></tr>",
             m->input_voltage, m->load_percent);
@@ -442,19 +442,19 @@ static esp_err_t status_handler(httpd_req_t *req)
             httpd_resp_sendstr_chunk(req, "<tr><td colspan='2' class='warn'>Status not descriptor-confirmed. Canonical UPS status remains UNKNOWN until NUT/descriptor PresentStatus or APCLineFailCause mapping is validated.</td></tr>");
         }
         if (m->nominal_power > 0) {
-            snprintf(buf, sizeof(buf),
+            snprintf(buf, 1024,
                 "<tr><th>Nominal Power</th><td class='val'>%.0f W</td></tr>",
                 m->nominal_power);
             httpd_resp_sendstr_chunk(req, buf);
         }
         if (m->input_voltage_nominal > 0) {
-            snprintf(buf, sizeof(buf),
+            snprintf(buf, 1024,
                 "<tr><th>Nominal Input</th><td class='val'>%.0f V</td></tr>",
                 m->input_voltage_nominal);
             httpd_resp_sendstr_chunk(req, buf);
         }
         if (strlen(m->beeper_status) > 0) {
-            snprintf(buf, sizeof(buf),
+            snprintf(buf, 1024,
                 "<tr><th>Beeper</th><td class='val'>%s</td></tr>",
                 m->beeper_status);
             httpd_resp_sendstr_chunk(req, buf);
@@ -467,7 +467,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "</table></div>");
 
     /* Connection Info */
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<div class='card'><h2>Connection</h2><table>"
         "<tr><th>WiFi</th><td class='val'>%s</td></tr>"
         "<tr><th>MQTT Broker</th><td class='val'>%s</td></tr>"
@@ -560,13 +560,14 @@ static esp_err_t status_handler(httpd_req_t *req)
         "    var t=document.getElementById('mtbl');"
         "    if(!t)return;"
         "    var r=[];"
-        "    r.push('<tr><th>Status</th><td>'+m.status+'</td></tr>');"
-        "    r.push('<tr><th>Battery Charge</th><td>'+m.charge+'%</td></tr>');"
-        "    r.push('<tr><th>Battery Voltage</th><td>'+m.voltage+' V</td></tr>');"
-        "    r.push('<tr><th>Battery Runtime</th><td>'+m.runtime+' s ('+m.runtime_min+' min)</td></tr>');"
-        "    r.push('<tr><th>Input Voltage</th><td>'+m.input_voltage+' V</td></tr>');"
-        "    r.push('<tr><th>Load</th><td>'+m.load+'%</td></tr>');"
-        "    if(m.beeper)r.push('<tr><th>Beeper</th><td>'+m.beeper+'</td></tr>');"
+        "    r.push('<tr><th>Power State</th><td>'+(m.dyn_ac==1?'<span style=\\'color:#3f3\\'>ON LINE</span>':'<span style=\\'color:#f33\\'>ON BATTERY</span>')+'</td></tr>');"
+        "    r.push('<tr><th>Load</th><td>'+m.dyn_load+'%</td></tr>');"
+        "    r.push('<tr><th>Nominal/Flow (0x09)</th><td>'+m.dyn_nominal+'</td></tr>');"
+        "    r.push('<tr><th>Est. Runtime</th><td>'+m.dyn_runtime+' min</td></tr>');"
+        "    r.push('<tr><th>Battery Capacity</th><td>'+m.dyn_capacity+'%</td></tr>');"
+        "    r.push('<tr><th>Time on Battery</th><td>'+m.dyn_time_on_batt+' min</td></tr>');"
+        "    r.push('<tr><th>Charge Status (0x12)</th><td>'+m.dyn_charge_status+'</td></tr>');"
+        "    r.push('<tr><th>Replace Battery (0x14)</th><td>'+(m.dyn_replace_batt==2?'<span style=\\'color:#f33\\'>YES</span>':'No')+'</td></tr>');"
         "    t.innerHTML=r.join('');"
         "  };"
         "  x.send();"
@@ -719,13 +720,17 @@ static esp_err_t metrics_handler(httpd_req_t *req)
     const char *transport_health = (stats.get_report_error || stats.get_report_timeout) ? "DEGRADED" : "OK";
 
     char buf[768];
-    snprintf(buf, sizeof(buf),
-        "{\"status\":\"%s\",\"status_class\":\"%s\",\"status_confidence\":\"%s\","
+    snprintf(buf, 1024,
+        "{\"dyn_ac\":%d,\"dyn_load\":%.1f,\"dyn_nominal\":%d,\"dyn_runtime\":%d,"
+        "\"dyn_capacity\":%d,\"dyn_time_on_batt\":%d,\"dyn_charge_status\":%d,\"dyn_replace_batt\":%d,"
+        "\"status\":\"%s\",\"status_class\":\"%s\",\"status_confidence\":\"%s\","
         "\"active_profile\":\"%s\",\"transport_health\":\"%s\",\"last_poll_age_ms\":%lu,"
         "\"poll_cycles\":%lu,\"get_report_success\":%lu,\"get_report_timeout\":%lu,\"get_report_stall\":%lu,\"get_report_error\":%lu,"
         "\"charge\":%.0f,\"voltage\":%.1f,\"runtime\":%.0f,\"runtime_min\":%.1f,"
         "\"input_voltage\":%.0f,\"load\":%.0f,"
         "\"nominal_power\":%.0f,\"input_nominal\":%.0f,\"beeper\":\"%s\"}",
+        m->dynamic_ac_present, m->dynamic_load_percent, m->dynamic_nominal_flow, m->dynamic_runtime_min,
+        m->dynamic_battery_capacity, m->dynamic_time_on_battery_min, m->dynamic_charge_status, m->dynamic_replace_battery,
         m->status_string,
         m->status.online ? "online" : "offline",
         m->status_confidence,
@@ -757,7 +762,7 @@ static esp_err_t version_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     char buf[192];
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
              "{\"name\":\"UPS MQTT Bridge\",\"version\":\"%s\",\"chipFamily\":\"ESP32-S3\"}\n",
              FW_VERSION);
     httpd_resp_sendstr(req, buf);
@@ -893,7 +898,7 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "<form method='POST' action='/api/usb-debug/config'>"
         "<label>Mode</label><select name='mode'>");
 
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<option value='off' %s>Normal Bridge</option>"
         "<option value='passive' %s>Passive Capture</option>"
         "<option value='active' %s>Active Debug</option>",
@@ -906,22 +911,22 @@ static esp_err_t usb_debug_page_handler(httpd_req_t *req)
         "</select>"
         "<div style='display:grid;grid-template-columns:1.5rem 1fr;gap:.45rem .75rem;align-items:start;margin:.75rem 0;'>");
 
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<input id='cap_int' type='checkbox' name='cap_int' value='1' %s><label for='cap_int'>Capture interrupt-IN reports</label>",
         cfg.capture_interrupt_reports ? "checked" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<input id='cap_feat' type='checkbox' name='cap_feat' value='1' %s><label for='cap_feat'>Capture normal GET_REPORT polls</label>",
         cfg.capture_feature_reports ? "checked" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<input id='raw_setup' type='checkbox' name='raw_setup' value='1' %s><label for='raw_setup'>Include raw 8-byte USB control SETUP packet in descriptor dumps</label>",
         cfg.include_control_setup ? "checked" : "");
     httpd_resp_sendstr_chunk(req, buf);
 
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "<input id='log' type='checkbox' name='log' value='1' %s><label for='log'>Mirror debug records to ESP log</label>",
         cfg.log_to_esp_log ? "checked" : "");
     httpd_resp_sendstr_chunk(req, buf);
@@ -951,7 +956,7 @@ static esp_err_t usb_debug_state_handler(httpd_req_t *req)
     usb_debug_state_t st; usb_debug_config_t cfg;
     usb_debug_get_state(&st); usb_debug_get_config(&cfg);
     char buf[512];
-    snprintf(buf, sizeof(buf),
+    snprintf(buf, 1024,
         "{\"mode\":\"%s\",\"ups_connected\":%s,\"capture_interrupt\":%s,\"capture_feature\":%s,\"include_control_setup\":%s,\"log_to_esp_log\":%s,\"interrupt_reports_seen\":%lu,\"feature_reports_seen\":%lu,\"descriptor_dumps\":%lu,\"errors\":%lu,\"dropped_records\":%lu,\"last_activity_ms\":%lld}",
         debug_mode_name(cfg.mode), st.ups_connected ? "true" : "false", cfg.capture_interrupt_reports ? "true" : "false", cfg.capture_feature_reports ? "true" : "false", cfg.include_control_setup ? "true" : "false", cfg.log_to_esp_log ? "true" : "false", (unsigned long)st.interrupt_reports_seen, (unsigned long)st.feature_reports_seen, (unsigned long)st.descriptor_dumps, (unsigned long)st.errors, (unsigned long)st.dropped_records, (long long)st.last_activity_ms);
     httpd_resp_set_type(req, "application/json");

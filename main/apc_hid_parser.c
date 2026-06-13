@@ -711,6 +711,23 @@ const ups_metrics_t* apc_hid_get_metrics(void)
     return &current_metrics;
 }
 
+void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_flow, 
+                                    int runtime_min, int capacity, int time_on_batt_min, 
+                                    int charge_status, int replace_batt) {
+    if (xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        current_metrics.dynamic_ac_present = ac_present;
+        current_metrics.dynamic_load_percent = load_pct;
+        current_metrics.dynamic_nominal_flow = nominal_flow;
+        current_metrics.dynamic_runtime_min = runtime_min;
+        current_metrics.dynamic_battery_capacity = capacity;
+        current_metrics.dynamic_time_on_battery_min = time_on_batt_min;
+        current_metrics.dynamic_charge_status = charge_status;
+        current_metrics.dynamic_replace_battery = replace_batt;
+        current_metrics.last_update_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        xSemaphoreGive(metrics_mutex);
+    }
+}
+
 void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buffer_size)
 {
     buffer[0] = '\0';

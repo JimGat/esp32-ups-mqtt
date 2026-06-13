@@ -52,6 +52,16 @@ typedef struct {
     float delay_before_reboot;         // seconds
     float delay_before_shutdown;       // seconds
 
+    // Dynamic HID Baseline Metrics (Universal Manufacturer Support)
+    int dynamic_ac_present;            // 1=ON LINE, 0=ON BATTERY (from Report 0x07)
+    float dynamic_load_percent;        // Load % (from Report 0x08)
+    int dynamic_nominal_flow;          // Nominal/Flow raw value (from Report 0x09)
+    int dynamic_runtime_min;           // Runtime in minutes (from Report 0x0A)
+    int dynamic_battery_capacity;      // Battery capacity % (from Report 0x0C)
+    int dynamic_time_on_battery_min;   // Time on battery in minutes (from Report 0x0D)
+    int dynamic_charge_status;         // Charge status code (from Report 0x12)
+    int dynamic_replace_battery;       // Replace battery indicator (from Report 0x14)
+
     // Device info
     char firmware_version[32];
     char driver_name[32];
@@ -87,6 +97,11 @@ ups_metrics_t apc_hid_get_metrics_snapshot(void);
  * Do NOT use this from MQTT or HTTP handlers; use apc_hid_get_metrics_snapshot() instead.
  */
 const ups_metrics_t* apc_hid_get_metrics(void);
+
+/** Update dynamic HID baseline metrics from usb_host_manager polling */
+void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_flow, 
+                                    int runtime_min, int capacity, int time_on_batt_min, 
+                                    int charge_status, int replace_batt);
 
 void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buffer_size);
 

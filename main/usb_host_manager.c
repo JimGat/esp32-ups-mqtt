@@ -121,6 +121,17 @@ static volatile bool input_report_pending = false;
 static const uint8_t poll_reports[] = {0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x12, 0x14};
 static volatile size_t current_poll_idx = 0;
 
+// Dynamic HID metrics cache (updated per-report, flushed to apc_hid_parser periodically)
+static volatile int dyn_ac_present = -1;
+static volatile float dyn_load_pct = -1.0f;
+static volatile int dyn_nominal_flow = -1;
+static volatile int dyn_runtime_min = -1;
+static volatile int dyn_battery_capacity = -1;
+static volatile int dyn_time_on_batt_min = -1;
+static volatile int dyn_charge_status = -1;
+static volatile int dyn_replace_batt = -1;
+static volatile int64_t last_dyn_update_ms = 0;
+
 
 static bool usb_diag_heap_checkpoint(const char *stage)
 {
@@ -276,36 +287,50 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
             uint8_t report_id = data[0];
             if (report_id == 0x07 && payload_len >= 3) {
                 uint16_t flags = data[1] | (data[2] << 8);
-                bool ac_present = (flags & 0x0010) != 0; // Bit 4 is typically ACPresent in HID UPS spec
+                bool ac_present = (flags & 0x0010) != 0;
+                dyn_ac_present = ac_present ? 1 : 0;
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (ACPresent=%s) [RAW: %s]", 
                          flags, ac_present ? "ON LINE" : "ON BATTERY", hex_line);
             } else if (report_id == 0x08 && payload_len >= 3) {
                 int raw_load = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load = %.1f%% (raw=%d) [RAW: %s]", raw_load / 10.0f, raw_load, hex_line);
+                dyn_load_pct = raw_load / 10.0f;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load = %.1f%% (raw=%d) [RAW: %s]", dyn_load_pct, raw_load, hex_line);
             } else if (report_id == 0x09 && payload_len >= 3) {
                 int raw_val = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x09 Nominal/Flow = %d [RAW: %s]", raw_val, hex_line);
+                dyn_nominal_flow = raw_val;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x09 Nominal/Flow = %d [RAW: %s]", dyn_nominal_flow, hex_line);
             } else if (report_id == 0x0A && payload_len >= 3) {
                 int raw_sec = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0A Runtime = %d min (%d sec) [RAW: %s]", raw_sec / 60, raw_sec, hex_line);
+                dyn_runtime_min = raw_sec / 60;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0A Runtime = %d min (%d sec) [RAW: %s]", dyn_runtime_min, raw_sec, hex_line);
             } else if (report_id == 0x0C && payload_len >= 3) {
                 int raw_cap = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0C Battery Capacity = %d%% [RAW: %s]", raw_cap, hex_line);
+                dyn_battery_capacity = raw_cap;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0C Battery Capacity = %d%% [RAW: %s]", dyn_battery_capacity, hex_line);
             } else if (report_id == 0x0D && payload_len >= 3) {
                 int raw_sec = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time on Battery = %d min (%d sec) [RAW: %s]", raw_sec / 60, raw_sec, hex_line);
+                dyn_time_on_batt_min = raw_sec / 60;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time on Battery = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
             } else if (report_id == 0x12 && payload_len >= 3) {
                 int raw_status = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %d [RAW: %s]", raw_status, hex_line);
+                dyn_charge_status = raw_status;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %d [RAW: %s]", dyn_charge_status, hex_line);
             } else if (report_id == 0x14 && payload_len >= 2) {
                 int raw_replace = data[1];
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %d (1=No, 2=Yes) [RAW: %s]", raw_replace, hex_line);
+                dyn_replace_batt = raw_replace;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %d (1=No, 2=Yes) [RAW: %s]", dyn_replace_batt, hex_line);
             } else {
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x%02X Unknown [RAW: %s]", report_id, hex_line);
             }
         } else {
             ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d [RAW: %s]", payload_len, hex_line);
         }
+        // Flush cached dynamic metrics to the central parser
+        apc_hid_update_dynamic_metrics(
+            (int)dyn_ac_present, (float)dyn_load_pct, (int)dyn_nominal_flow,
+            (int)dyn_runtime_min, (int)dyn_battery_capacity, (int)dyn_time_on_batt_min,
+            (int)dyn_charge_status, (int)dyn_replace_batt
+        );
         input_report_pending = false;
     } else {
         ESP_LOGW(TAG, "⚠️ HID Input Report failed: %d", transfer->status);

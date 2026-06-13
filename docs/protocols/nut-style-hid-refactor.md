@@ -581,3 +581,15 @@ v0.4.21 proved Wi-Fi/HTTP remains solid with USB host install, client registrati
 Interpretation:
 - If ping/web break here, the root cause is client event dispatch/callback invocation itself.
 - If ping/web remain solid and NEW_DEV is observed, the root cause is in the callback's device open/descriptor path.
+
+## v0.4.23-dev: USB device descriptor-only diagnostic
+
+v0.4.22 proved Wi-Fi/HTTP remains solid with both USB lib and client event pumps running while the callback only observes events. This build advances one boundary:
+- Wi-Fi/HTTP/OTA/SNTP remain enabled.
+- MQTT remains disabled.
+- On NEW_DEV, callback opens the device, reads the standard USB device descriptor, logs VID/PID/class/config count, then closes immediately.
+- It does not claim HID interface, read config descriptor, request HID report descriptor, or poll reports.
+
+Interpretation:
+- If ping/web break here, root cause is device open/get-device-descriptor/close path.
+- If ping/web remain solid and VID/PID logs, root cause is later: active config descriptor, interface claim, or HID report descriptor request.

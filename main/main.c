@@ -402,14 +402,14 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.22 USB-CLIENT-EVENTS-OBSERVE diagnostic:
-    // Pump both USB library and client events, but callback only logs events and returns.
-    // No device open, interface claim, descriptor request, or polling is possible.
-    ESP_LOGW(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: install/register + client events observe-only");
-    esp_err_t usb_observe_diag_err = usb_host_register_client_only_diag();
-    ESP_LOGW(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: install/register result=%s", esp_err_to_name(usb_observe_diag_err));
-    if (usb_observe_diag_err == ESP_OK) {
-        xTaskCreate(usb_host_client_events_observe_task, "usb_cli_obs", 4096, NULL, 4, NULL);
+    // v0.4.23 USB-DEVICE-DESCRIPTOR-ONLY diagnostic:
+    // On NEW_DEV, open device, read USB device descriptor, log VID/PID, then close.
+    // No interface claim, config descriptor, HID report descriptor, or polling is possible.
+    ESP_LOGW(TAG, "USB_DEVICE_DESC_ONLY_DIAG: open/read-device-desc/close only");
+    esp_err_t usb_dev_desc_diag_err = usb_host_register_client_only_diag();
+    ESP_LOGW(TAG, "USB_DEVICE_DESC_ONLY_DIAG: install/register result=%s", esp_err_to_name(usb_dev_desc_diag_err));
+    if (usb_dev_desc_diag_err == ESP_OK) {
+        xTaskCreate(usb_host_device_descriptor_only_task, "usb_dev_desc", 4096, NULL, 4, NULL);
     }
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");

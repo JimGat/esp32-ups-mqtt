@@ -308,6 +308,8 @@ static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 static volatile bool client_events_observe_only_diag = false;
 static volatile bool device_descriptor_only_diag = false;
 static volatile bool config_descriptor_only_diag = false;
+static volatile uint32_t diag_new_dev_count = 0;
+static volatile uint32_t diag_dev_gone_count = 0;
 
 // Runtime USB debug mode. This is intentionally NOT persisted to NVS:
 // every reboot returns the bridge to normal MQTT mode so field debug cannot
@@ -573,7 +575,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 
     if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag) {
         if (event_msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
-            ESP_LOGI(TAG, "USB_DIAG: NEW_DEV addr=%d observed", event_msg->new_dev.address);
+            diag_new_dev_count++;
+            ESP_LOGW(TAG, "USB_DIAG: NEW_DEV #%lu addr=%d observed", (unsigned long)diag_new_dev_count, event_msg->new_dev.address);
             if (device_descriptor_only_diag || config_descriptor_only_diag) {
                 usb_device_handle_t dev_hdl = NULL;
                 esp_err_t err = usb_host_device_open(usb_client, event_msg->new_dev.address, &dev_hdl);
@@ -619,7 +622,8 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                 ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: observe only; no open/claim/descriptor");
             }
         } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
-            ESP_LOGW(TAG, "USB_DIAG: DEV_GONE observed; no cleanup work");
+            diag_dev_gone_count++;
+            ESP_LOGW(TAG, "USB_DIAG: DEV_GONE #%lu observed; no cleanup work", (unsigned long)diag_dev_gone_count);
         } else {
             ESP_LOGI(TAG, "USB_DIAG: event=%d observed", event_msg->event);
         }
@@ -1249,6 +1253,8 @@ void usb_host_config_descriptor_only_task(void *arg)
     client_events_observe_only_diag = false;
     device_descriptor_only_diag = false;
     config_descriptor_only_diag = true;
+    diag_new_dev_count = 0;
+    diag_dev_gone_count = 0;
     ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: task started");
     ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: callback opens device, reads device+active config descriptors, closes");
 
@@ -1275,9 +1281,16 @@ void usb_host_config_descriptor_only_task(void *arg)
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;
-        if ((now_ms - last_heartbeat_ms) >= 2000) {
+        if ((now_ms - last_heartbeat_ms) >= 10000) {
             last_heartbeat_ms = now_ms;
-            ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG heartbeat: loop=%d errors=%d", loop_count, error_count);
+            ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu",
+                     loop_count,
+                     error_count,
+                     (unsigned long)diag_new_dev_count,
+                     (unsigned long)diag_dev_gone_count);
+            if (diag_new_dev_count == 0) {
+                ESP_LOGW(TAG, "USB_CONFIG_DESC_ONLY_DIAG: still waiting for NEW_DEV event from USB host client");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }

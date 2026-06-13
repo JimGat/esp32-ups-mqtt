@@ -603,3 +603,13 @@ v0.4.23 proved Wi-Fi/HTTP remains solid while opening the UPS, reading the USB d
 Interpretation:
 - If ping/web break here, root cause is active config descriptor read or descriptor parsing/logging.
 - If ping/web remain solid and config/interface logs appear, root cause is later: interface claim or HID report descriptor request.
+
+## v0.4.25-dev: config descriptor diagnostic with explicit attach visibility
+
+v0.4.24 remained network-stable but the provided log did not show a NEW_DEV event, so it did not exercise the active config descriptor path. This build keeps the same diagnostic boundary and improves observability:
+- NEW_DEV and DEV_GONE counters are logged.
+- NEW_DEV is logged as a warning-level line so it is hard to miss.
+- Heartbeat cadence is reduced to 10 seconds and includes `new_dev` / `dev_gone` counters.
+- If no NEW_DEV is seen, heartbeat explicitly logs that it is still waiting for the USB host client attach event.
+
+Interpretation remains the same as v0.4.24 once NEW_DEV appears.

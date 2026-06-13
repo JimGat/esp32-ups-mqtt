@@ -644,3 +644,7 @@ Interpretation so far:
 v0.4.31 as flashed was a stable recovery/interface-claim boundary. It contained the deferred-free helper code, but did not arm the HID descriptor request path. v0.4.32 explicitly re-arms the minimal 64-byte HID report descriptor request and frees completed transfers only after `usb_host_client_handle_events()` returns in the USB task context.
 
 Expected stable heartbeat: `submit=ESP_OK requested=1 complete=1 desc_status=0 payload=64 raw=72` plus `descriptor transfer freed safely in task context`.
+
+## v0.4.33-dev: delayed descriptor cleanup after callback
+
+v0.4.32 proved the 64-byte descriptor request completes and the callback returns with `status=0 raw=72 payload=64`, but freeing the transfer on the same task loop immediately after `usb_host_client_handle_events()` still led to an LwIP `LoadProhibited` panic. v0.4.33 delays transfer free by five USB task loops after the callback, then releases the HID interface and closes the device in task context. This tests whether ESP-IDF needs additional event cycles before application cleanup of a completed control transfer.

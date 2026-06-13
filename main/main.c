@@ -330,6 +330,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
     ESP_LOGI(TAG, "🚀 UPS MQTT Bridge Starting");
+    ESP_LOGW(TAG, "RESET_REASON: esp_reset_reason=%d", (int)esp_reset_reason());
     ESP_LOGI(TAG, "   Version: %s", FW_VERSION);
     ESP_LOGI(TAG, "   Build: %s", BUILD_TIMESTAMP);
     ESP_LOGI(TAG, "═══════════════════════════════════════════");
@@ -402,9 +403,9 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.32 USB-HID-REPORT-DESCRIPTOR-MINIMAL diagnostic:
+    // v0.4.33 USB-HID-REPORT-DESCRIPTOR-MINIMAL delayed-cleanup diagnostic:
     // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
-    // Callback defers transfer free to task context to prevent heap corruption. No polling or MQTT.
+    // Callback defers transfer free; task waits 5 loops, frees, releases interface, and closes device. No polling or MQTT.
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: claim interface then request 64-byte HID report descriptor from task");
     esp_err_t usb_hid_desc_diag_err = usb_host_register_client_only_diag();
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: install/register result=%s", esp_err_to_name(usb_hid_desc_diag_err));

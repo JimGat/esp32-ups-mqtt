@@ -71,6 +71,7 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "usb/usb_host.h"
 #include "usb/usb_types_ch9.h"
 #include <string.h>
@@ -97,10 +98,31 @@ static volatile bool descriptor_complete = false;
 static volatile bool hid_report_descriptor_only_diag = false;
 static volatile bool hid_report_descriptor_minimal_diag = false;
 static volatile usb_transfer_t *pending_descriptor_transfer = NULL;
+static volatile int pending_descriptor_free_delay = -1;
+static volatile bool descriptor_cleanup_done = false;
 static volatile int diag_descriptor_status = -1;
 static volatile int diag_descriptor_payload_len = -1;
 static volatile int diag_descriptor_raw_len = -1;
 static volatile esp_err_t diag_descriptor_submit_err = ESP_ERR_INVALID_STATE;
+
+
+static void usb_diag_heap_checkpoint(const char *stage)
+{
+    bool ok = heap_caps_check_integrity_all(true);
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    size_t min_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    ESP_LOGW(TAG,
+             "USB_HEAP_DIAG: stage=%s integrity=%s free_internal=%u min_internal=%u largest_internal=%u pending=%p delay=%d cleanup=%d",
+             stage,
+             ok ? "OK" : "BAD",
+             (unsigned)free_internal,
+             (unsigned)min_internal,
+             (unsigned)largest_internal,
+             (void *)pending_descriptor_transfer,
+             pending_descriptor_free_delay,
+             descriptor_cleanup_done);
+}
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
@@ -114,7 +136,9 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
         descriptor_complete = (transfer->status == USB_TRANSFER_STATUS_COMPLETED);
         descriptor_needed = false;
         pending_descriptor_transfer = transfer;
-        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (free deferred to task)",
+        pending_descriptor_free_delay = 5;
+        usb_diag_heap_checkpoint("callback-before-return");
+        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (free delayed 5 task loops)",
                  transfer->status, transfer->actual_num_bytes, payload_len);
         return;
     }
@@ -1341,6 +1365,8 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
     diag_descriptor_raw_len = -1;
     diag_descriptor_submit_err = ESP_ERR_INVALID_STATE;
     pending_descriptor_transfer = NULL;
+    pending_descriptor_free_delay = -1;
+    descriptor_cleanup_done = false;
     descriptor_needed = false;
     descriptor_requested = false;
     descriptor_complete = false;
@@ -1370,21 +1396,46 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
         }
 
         if (pending_descriptor_transfer != NULL) {
-            usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
-            pending_descriptor_transfer = NULL;
-            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: descriptor transfer freed safely in task context");
+            if (pending_descriptor_free_delay > 0) {
+                pending_descriptor_free_delay--;
+            } else {
+                usb_diag_heap_checkpoint("before-transfer-free");
+                usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
+                pending_descriptor_transfer = NULL;
+                pending_descriptor_free_delay = -1;
+                usb_diag_heap_checkpoint("after-transfer-free");
+                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: descriptor transfer freed after delayed task-context cleanup");
+            }
+        }
+
+        if (descriptor_complete && !descriptor_cleanup_done && pending_descriptor_transfer == NULL && ups_device != NULL) {
+            usb_diag_heap_checkpoint("before-interface-release");
+            esp_err_t rel_err = usb_host_interface_release(usb_client, ups_device, HID_INTERFACE);
+            diag_release_err = rel_err;
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_interface_release(intf=%d) -> %s",
+                     HID_INTERFACE, esp_err_to_name(rel_err));
+            usb_diag_heap_checkpoint("after-interface-release-before-close");
+            esp_err_t close_err = usb_host_device_close(usb_client, ups_device);
+            diag_close_err = close_err;
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_device_close -> %s", esp_err_to_name(close_err));
+            ups_device = NULL;
+            ups_connected = false;
+            descriptor_cleanup_done = true;
+            usb_diag_heap_checkpoint("after-device-close");
         }
 
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {
+            usb_diag_heap_checkpoint("before-submit");
             ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: submitting 64-byte HID report descriptor request from task context");
             descriptor_requested = true;
             request_hid_report_descriptor(ups_device, HID_INTERFACE);
+            usb_diag_heap_checkpoint("after-submit");
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;
         if ((now_ms - last_heartbeat_ms) >= 10000) {
             last_heartbeat_ms = now_ms;
-            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu vidpid=%04X:%04X class=0x%02X open=%s devdesc=%s cfg=%s claim=%s submit=%s requested=%d complete=%d desc_status=%d payload=%d raw=%d",
+            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu vidpid=%04X:%04X class=0x%02X open=%s devdesc=%s cfg=%s claim=%s submit=%s requested=%d complete=%d cleanup=%d desc_status=%d payload=%d raw=%d",
                      loop_count,
                      error_count,
                      (unsigned long)diag_new_dev_count,
@@ -1399,6 +1450,7 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
                      esp_err_to_name(diag_descriptor_submit_err),
                      descriptor_requested,
                      descriptor_complete,
+                     descriptor_cleanup_done,
                      diag_descriptor_status,
                      diag_descriptor_payload_len,
                      diag_descriptor_raw_len);

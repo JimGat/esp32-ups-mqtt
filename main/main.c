@@ -402,11 +402,12 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.18 NETWORK-ONLY DIAGNOSTIC:
-    // USB host install/task intentionally disabled to isolate Wi-Fi/HTTP ping loss.
-    // If network is stable in this build, the regression is in USB host install/event handling.
-    ESP_LOGW(TAG, "NETWORK_ONLY_DIAG: USB host init disabled; Wi-Fi/HTTP stability test only");
-    ESP_LOGW(TAG, "NETWORK_ONLY_DIAG: no USB descriptor discovery in this diagnostic build");
+    // v0.4.19 USB-INSTALL-ONLY DIAGNOSTIC:
+    // Install ESP-IDF USB host library, but do not register a client or create a USB task.
+    // This separates USB host install/PHY side effects from client event/task logic.
+    ESP_LOGW(TAG, "USB_INSTALL_ONLY_DIAG: USB host install only; no client/task/descriptor");
+    esp_err_t usb_install_err = usb_host_install_only_diag();
+    ESP_LOGW(TAG, "USB_INSTALL_ONLY_DIAG: install result=%s", esp_err_to_name(usb_install_err));
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

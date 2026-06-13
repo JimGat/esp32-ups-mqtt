@@ -1063,6 +1063,22 @@ static void usb_debug_process_commands(void)
     }
 }
 
+
+esp_err_t usb_host_install_only_diag(void)
+{
+    ESP_LOGI(TAG, "USB_INSTALL_ONLY_DIAG: installing USB Host library only");
+    ESP_LOGI(TAG, "USB_INSTALL_ONLY_DIAG: no client registration, no USB task, no descriptor request");
+
+    const usb_host_config_t host_config = {
+        .skip_phy_setup = false,
+        .intr_flags = ESP_INTR_FLAG_LEVEL1,
+    };
+
+    esp_err_t ret = usb_host_install(&host_config);
+    ESP_LOGI(TAG, "USB_INSTALL_ONLY_DIAG: usb_host_install returned: 0x%x (%s)", ret, esp_err_to_name(ret));
+    return ret;
+}
+
 esp_err_t usb_host_init(void)
 {
     ESP_LOGI(TAG, "DEBUG: usb_host_init() called");

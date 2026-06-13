@@ -524,3 +524,17 @@ Purpose: isolate severe ping loss / intermittent web responsiveness seen in v0.4
 This build intentionally disables USB host initialization and the USB task entirely while keeping Wi-Fi, HTTP, OTA, SNTP, and strict no-MQTT behavior. It does not attempt descriptor discovery. Expected use:
 - If ping/web become stable, root cause is in ESP-IDF USB host install/event handling or its interaction with Wi-Fi on this board/build.
 - If ping/web remain unstable, root cause is outside the USB host/descriptor path and should be investigated in Wi-Fi/HTTP/runtime startup.
+
+## v0.4.19-dev: USB host install-only diagnostic
+
+v0.4.18 proved Wi-Fi/HTTP is solid when the USB host path is disabled. This build isolates the next boundary:
+- Wi-Fi/HTTP/OTA/SNTP remain enabled.
+- MQTT remains disabled.
+- `usb_host_install()` is called with the normal host config.
+- No USB client is registered.
+- No USB task is created.
+- No descriptor request or telemetry polling is possible.
+
+Interpretation:
+- If ping/web break here, the root cause is USB host install/PHY/interrupt side effects.
+- If ping/web remain solid here, the root cause is in USB client registration, event handling, or the USB task loop.

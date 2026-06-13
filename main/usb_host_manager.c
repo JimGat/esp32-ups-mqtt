@@ -94,9 +94,29 @@ static usb_debug_config_t debug_cfg = {
 static volatile bool descriptor_needed = false;
 static volatile bool descriptor_requested = false;
 static volatile bool descriptor_complete = false;
+static volatile bool hid_report_descriptor_minimal_diag = false;
+static volatile usb_transfer_t *pending_descriptor_transfer = NULL;
+static volatile int diag_descriptor_status = -1;
+static volatile int diag_descriptor_payload_len = -1;
+static volatile int diag_descriptor_raw_len = -1;
+static volatile esp_err_t diag_descriptor_submit_err = ESP_ERR_INVALID_STATE;
 
 /* ---- Evil Hardware Hacker Mode: Dump HID Report Descriptor ---- */
 static void hid_report_desc_cb(usb_transfer_t *transfer) {
+    if (hid_report_descriptor_minimal_diag) {
+        int setup_len = sizeof(usb_setup_packet_t);
+        int payload_len = transfer->actual_num_bytes - setup_len;
+        if (payload_len < 0) payload_len = 0;
+        diag_descriptor_payload_len = payload_len;
+        diag_descriptor_raw_len = transfer->actual_num_bytes;
+        diag_descriptor_status = transfer->status;
+        descriptor_complete = (transfer->status == USB_TRANSFER_STATUS_COMPLETED);
+        descriptor_needed = false;
+        pending_descriptor_transfer = transfer;
+        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (free deferred to task)",
+                 transfer->status, transfer->actual_num_bytes, payload_len);
+        return;
+    }
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
         // usb_host_transfer_submit_control() leaves the 8-byte SETUP packet at
         // data_buffer[0..7], followed by the returned IN data. The default view
@@ -190,7 +210,7 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
     usb_transfer_t *ctrl_xfer = NULL;
-    const size_t payload_len = 1024;  // Some Smart-UPS descriptors exceed 512 bytes
+    const size_t payload_len = hid_report_descriptor_minimal_diag ? 64 : 1024;  // Minimal diag tests first packet only
     const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
     const size_t alloc_size = (xfer_size + 63) & ~((size_t)63);  // ESP-IDF USB host wants 64-byte aligned allocation sizes
 
@@ -1323,6 +1343,12 @@ void usb_host_interface_claim_only_task(void *arg)
         if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
             error_count++;
             ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
+        }
+
+        // Defer transfer free to task context to prevent heap corruption
+        if (pending_descriptor_transfer != NULL) {
+            usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
+            pending_descriptor_transfer = NULL;
         }
 
         int64_t now_ms = esp_timer_get_time() / 1000;

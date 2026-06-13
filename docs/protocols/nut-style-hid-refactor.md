@@ -656,3 +656,7 @@ v0.4.33 showed heap integrity is OK at submit and inside the callback, but becom
 ## v0.4.35-dev: gated 30s settle before descriptor request
 
 v0.4.34 field testing showed hot-plug after Wi-Fi/HTTP stabilization can behave differently from cold boot with UPS already attached. v0.4.35 claims the HID interface, waits 30 seconds while emitting heap integrity checkpoints, and only submits the 64-byte report descriptor request if heap integrity remains OK. If heap is already BAD before submit, it skips the descriptor request to preserve OTA access.
+
+## v0.4.36-dev: exact allocation with 60s gated cleanup
+
+v0.4.35 proved the exact-size 64-byte HID report descriptor control transfer can complete and remain heap-stable when the completed transfer/device are intentionally retained. v0.4.36 keeps exact allocation and the 30s pre-submit settle, then waits 60s after callback before attempting gated cleanup: transfer free, interface release, and device close. Cleanup is skipped if heap integrity is BAD at the gate.

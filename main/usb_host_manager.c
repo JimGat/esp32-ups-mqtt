@@ -106,6 +106,8 @@ static volatile int diag_descriptor_raw_len = -1;
 static volatile esp_err_t diag_descriptor_submit_err = ESP_ERR_INVALID_STATE;
 static volatile int64_t descriptor_ready_at_ms = 0;
 static volatile bool descriptor_submit_skipped = false;
+static volatile int64_t descriptor_cleanup_at_ms = 0;
+static volatile bool descriptor_cleanup_skipped = false;
 
 
 static bool usb_diag_heap_checkpoint(const char *stage)
@@ -139,9 +141,10 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
         descriptor_complete = (transfer->status == USB_TRANSFER_STATUS_COMPLETED);
         descriptor_needed = false;
         pending_descriptor_transfer = transfer;
-        pending_descriptor_free_delay = -2;  // v0.4.34: intentionally do not free/cleanup; prove post-completion heap state
+        pending_descriptor_free_delay = -3;  // v0.4.36: cleanup scheduled after 60s post-callback stability window
+        descriptor_cleanup_at_ms = (esp_timer_get_time() / 1000) + 60000;
         usb_diag_heap_checkpoint("callback-before-return");
-        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (no cleanup/free in v0.4.34)",
+        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (cleanup gated for 60s)",
                  transfer->status, transfer->actual_num_bytes, payload_len);
         return;
     }
@@ -1377,8 +1380,10 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
     descriptor_complete = false;
     descriptor_ready_at_ms = 0;
     descriptor_submit_skipped = false;
+    descriptor_cleanup_at_ms = 0;
+    descriptor_cleanup_skipped = false;
     ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: task started");
-    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback claims HID interface; task waits 30s and submits only if heap remains OK");
+    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: task waits 30s before submit, then 60s before gated cleanup");
 
     int loop_count = 0;
     int error_count = 0;
@@ -1402,13 +1407,49 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
             ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
         }
 
-        if (pending_descriptor_transfer != NULL && pending_descriptor_free_delay == -2 && !descriptor_cleanup_done) {
-            usb_diag_heap_checkpoint("post-callback-no-cleanup");
-            descriptor_cleanup_done = true;  // only suppress repeated one-shot checkpoint; no actual cleanup in v0.4.34
-            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: v0.4.34 intentionally retaining completed transfer/device to test heap stability");
+        int64_t now_ms = esp_timer_get_time() / 1000;
+
+        if (pending_descriptor_transfer != NULL && pending_descriptor_free_delay == -3 && !descriptor_cleanup_done && !descriptor_cleanup_skipped) {
+            if (descriptor_cleanup_at_ms > 0 && now_ms < descriptor_cleanup_at_ms) {
+                if ((loop_count % 50) == 0) {
+                    usb_diag_heap_checkpoint("post-callback-wait-before-cleanup");
+                    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: waiting before cleanup, remaining_ms=%lld",
+                             (long long)(descriptor_cleanup_at_ms - now_ms));
+                }
+            } else {
+                bool heap_ok = usb_diag_heap_checkpoint("before-transfer-free");
+                if (!heap_ok) {
+                    descriptor_cleanup_skipped = true;
+                    ESP_LOGE(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: heap BAD before cleanup; retaining transfer/device to preserve OTA");
+                } else {
+                    usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
+                    pending_descriptor_transfer = NULL;
+                    pending_descriptor_free_delay = -1;
+                    usb_diag_heap_checkpoint("after-transfer-free");
+                    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: descriptor transfer freed after 60s gated cleanup");
+
+                    bool release_heap_ok = usb_diag_heap_checkpoint("before-interface-release");
+                    if (release_heap_ok && ups_device != NULL) {
+                        esp_err_t rel_err = usb_host_interface_release(usb_client, ups_device, HID_INTERFACE);
+                        diag_release_err = rel_err;
+                        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_interface_release(intf=%d) -> %s",
+                                 HID_INTERFACE, esp_err_to_name(rel_err));
+                        usb_diag_heap_checkpoint("after-interface-release-before-close");
+                        esp_err_t close_err = usb_host_device_close(usb_client, ups_device);
+                        diag_close_err = close_err;
+                        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_device_close -> %s", esp_err_to_name(close_err));
+                        ups_device = NULL;
+                        ups_connected = false;
+                        usb_diag_heap_checkpoint("after-device-close");
+                    } else {
+                        descriptor_cleanup_skipped = true;
+                        ESP_LOGE(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: heap BAD before release or missing device; cleanup skipped");
+                    }
+                    descriptor_cleanup_done = true;
+                }
+            }
         }
 
-        int64_t now_ms = esp_timer_get_time() / 1000;
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested && !descriptor_submit_skipped) {
             if (descriptor_ready_at_ms > 0 && now_ms < descriptor_ready_at_ms) {
                 if ((loop_count % 50) == 0) {
@@ -1434,7 +1475,7 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
 
         if ((now_ms - last_heartbeat_ms) >= 10000) {
             last_heartbeat_ms = now_ms;
-            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu vidpid=%04X:%04X class=0x%02X open=%s devdesc=%s cfg=%s claim=%s submit=%s requested=%d skipped=%d complete=%d cleanup=%d desc_status=%d payload=%d raw=%d",
+            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu vidpid=%04X:%04X class=0x%02X open=%s devdesc=%s cfg=%s claim=%s submit=%s requested=%d skipped=%d complete=%d cleanup=%d cleanup_skipped=%d desc_status=%d payload=%d raw=%d",
                      loop_count,
                      error_count,
                      (unsigned long)diag_new_dev_count,
@@ -1451,6 +1492,7 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
                      descriptor_submit_skipped,
                      descriptor_complete,
                      descriptor_cleanup_done,
+                     descriptor_cleanup_skipped,
                      diag_descriptor_status,
                      diag_descriptor_payload_len,
                      diag_descriptor_raw_len);

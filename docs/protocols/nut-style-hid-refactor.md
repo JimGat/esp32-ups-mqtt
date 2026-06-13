@@ -613,3 +613,13 @@ v0.4.24 remained network-stable but the provided log did not show a NEW_DEV even
 - If no NEW_DEV is seen, heartbeat explicitly logs that it is still waiting for the USB host client attach event.
 
 Interpretation remains the same as v0.4.24 once NEW_DEV appears.
+
+## v0.4.26-dev: USB HID interface claim-only diagnostic
+
+v0.4.25 proved Wi-Fi/HTTP remains solid through NEW_DEV, device open, USB device descriptor read, active config descriptor read, interface descriptor parsing, and device close. This build advances one boundary:
+- On NEW_DEV, callback opens the device, reads device/config descriptors, claims HID interface 0 alt 0, releases it, then closes.
+- It does not request the HID report descriptor or poll reports.
+
+Interpretation:
+- If ping/web break here, root cause is HID interface claim/release.
+- If ping/web remain solid and claim/release logs ESP_OK, root cause is later: HID report descriptor control transfer submission/callback.

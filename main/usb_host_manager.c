@@ -308,6 +308,7 @@ static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 static volatile bool client_events_observe_only_diag = false;
 static volatile bool device_descriptor_only_diag = false;
 static volatile bool config_descriptor_only_diag = false;
+static volatile bool interface_claim_only_diag = false;
 static volatile uint32_t diag_new_dev_count = 0;
 static volatile uint32_t diag_dev_gone_count = 0;
 
@@ -573,11 +574,11 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 {
     ESP_LOGI(TAG, "DEBUG: Event callback triggered, event=%d", event_msg->event);
 
-    if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag) {
+    if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag) {
         if (event_msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
             diag_new_dev_count++;
             ESP_LOGW(TAG, "USB_DIAG: NEW_DEV #%lu addr=%d observed", (unsigned long)diag_new_dev_count, event_msg->new_dev.address);
-            if (device_descriptor_only_diag || config_descriptor_only_diag) {
+            if (device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag) {
                 usb_device_handle_t dev_hdl = NULL;
                 esp_err_t err = usb_host_device_open(usb_client, event_msg->new_dev.address, &dev_hdl);
                 ESP_LOGI(TAG, "USB_DEVICE_DESC_ONLY_DIAG: usb_host_device_open -> %s", esp_err_to_name(err));
@@ -592,7 +593,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                                  dev_desc->bDeviceClass,
                                  dev_desc->bNumConfigurations);
                     }
-                    if (config_descriptor_only_diag) {
+                    if (config_descriptor_only_diag || interface_claim_only_diag) {
                         const usb_config_desc_t *config_desc = NULL;
                         err = usb_host_get_active_config_descriptor(dev_hdl, &config_desc);
                         ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: usb_host_get_active_config_descriptor -> %s", esp_err_to_name(err));
@@ -613,6 +614,18 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                             } else {
                                 ESP_LOGW(TAG, "USB_CONFIG_DESC_ONLY_DIAG: HID interface %d not found", HID_INTERFACE);
                             }
+                        }
+                    }
+                    if (interface_claim_only_diag) {
+                        err = usb_host_interface_claim(usb_client, dev_hdl, HID_INTERFACE, 0);
+                        ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: usb_host_interface_claim(intf=%d, alt=0) -> %s",
+                                 HID_INTERFACE,
+                                 esp_err_to_name(err));
+                        if (err == ESP_OK) {
+                            esp_err_t rel_err = usb_host_interface_release(usb_client, dev_hdl, HID_INTERFACE);
+                            ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: usb_host_interface_release(intf=%d) -> %s",
+                                     HID_INTERFACE,
+                                     esp_err_to_name(rel_err));
                         }
                     }
                     err = usb_host_device_close(usb_client, dev_hdl);
@@ -1246,6 +1259,57 @@ esp_err_t usb_host_init(void)
 
 
 
+
+
+void usb_host_interface_claim_only_task(void *arg)
+{
+    (void)arg;
+    client_events_observe_only_diag = false;
+    device_descriptor_only_diag = false;
+    config_descriptor_only_diag = false;
+    interface_claim_only_diag = true;
+    diag_new_dev_count = 0;
+    diag_dev_gone_count = 0;
+    ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: task started");
+    ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: callback opens device, reads descriptors, claims+releases HID interface, closes");
+
+    int loop_count = 0;
+    int error_count = 0;
+    int64_t last_heartbeat_ms = 0;
+
+    while (1) {
+        loop_count++;
+
+        uint32_t event_flags = 0;
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
+        if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: lib event error: %s", esp_err_to_name(lib_err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: lib event_flags=0x%lx", (unsigned long)event_flags);
+        }
+
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(10));
+        if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
+            error_count++;
+            ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
+        }
+
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 10000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu",
+                     loop_count,
+                     error_count,
+                     (unsigned long)diag_new_dev_count,
+                     (unsigned long)diag_dev_gone_count);
+            if (diag_new_dev_count == 0) {
+                ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: still waiting for NEW_DEV event from USB host client");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
 void usb_host_config_descriptor_only_task(void *arg)
 {

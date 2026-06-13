@@ -1181,6 +1181,36 @@ esp_err_t usb_host_init(void)
     return ESP_OK;
 }
 
+
+void usb_host_lib_events_only_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "USB_LIB_EVENTS_ONLY_DIAG: task started");
+    ESP_LOGI(TAG, "USB_LIB_EVENTS_ONLY_DIAG: pumping usb_host_lib_handle_events only; no client events/callback/descriptor");
+
+    int loop_count = 0;
+    int64_t last_heartbeat_ms = 0;
+
+    while (1) {
+        loop_count++;
+        uint32_t event_flags = 0;
+        esp_err_t err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
+        if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB_LIB_EVENTS_ONLY_DIAG: lib event error: %s", esp_err_to_name(err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB_LIB_EVENTS_ONLY_DIAG: event_flags=0x%lx", (unsigned long)event_flags);
+        }
+
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 2000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG, "USB_LIB_EVENTS_ONLY_DIAG heartbeat: loop=%d", loop_count);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 void usb_host_task(void *arg)
 {
     (void)arg;

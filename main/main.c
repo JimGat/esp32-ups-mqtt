@@ -402,12 +402,15 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.20 USB-CLIENT-REGISTER-ONLY DIAGNOSTIC:
-    // Install ESP-IDF USB host library and register the async client/callback only.
-    // Do not create the USB task, handle events, request descriptors, or poll reports.
-    ESP_LOGW(TAG, "USB_CLIENT_ONLY_DIAG: install + client register only; no task/events/descriptor");
-    esp_err_t usb_client_diag_err = usb_host_register_client_only_diag();
-    ESP_LOGW(TAG, "USB_CLIENT_ONLY_DIAG: result=%s", esp_err_to_name(usb_client_diag_err));
+    // v0.4.21 USB-LIB-EVENTS-ONLY DIAGNOSTIC:
+    // Install/register USB host client, then pump only usb_host_lib_handle_events().
+    // Do not call usb_host_client_handle_events(), so callback/device open/descriptor cannot run.
+    ESP_LOGW(TAG, "USB_LIB_EVENTS_ONLY_DIAG: install + client register + lib events only");
+    esp_err_t usb_lib_diag_err = usb_host_register_client_only_diag();
+    ESP_LOGW(TAG, "USB_LIB_EVENTS_ONLY_DIAG: install/register result=%s", esp_err_to_name(usb_lib_diag_err));
+    if (usb_lib_diag_err == ESP_OK) {
+        xTaskCreate(usb_host_lib_events_only_task, "usb_lib_evt", 4096, NULL, 4, NULL);
+    }
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

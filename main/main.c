@@ -9,7 +9,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "lwip/apps/sntp.h"
+#include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "mqtt_client.h"
 
@@ -30,6 +30,19 @@ static void quiet_network_scanner_noise(void)
     esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
 }
 
+
+static void sntp_time_sync_notification_cb(struct timeval *tv)
+{
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1); // Jim's US Central Time
+    tzset();
+    localtime_r(&now, &timeinfo);
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
+    ESP_LOGI(TAG, "🕒 SNTP time synchronized: %s", strftime_buf);
+}
 
 static void publish_immediate_power_snapshot(const ups_metrics_t *metrics)
 {
@@ -290,8 +303,18 @@ static void mqtt_publish_task(void *arg)
                 ESP_LOGI(TAG, "   🛡️  dynamic_battery_health → %s", health_str);
                 mqtt_publish_string("dynamic_battery_health", health_str);
 
+                // Print current time for MQTT publish log
+                time_t now;
+                struct tm timeinfo;
+                time(&now);
+                setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1); // US Central Time
+                tzset();
+                localtime_r(&now, &timeinfo);
+                char strftime_buf[32];
+                strftime(strftime_buf, sizeof(strftime_buf), "%H:%M:%S %Z", &timeinfo);
+
                 ESP_LOGI(TAG, "");
-                ESP_LOGI(TAG, "✅ MQTT PUBLISH COMPLETE");
+                ESP_LOGI(TAG, "⏰ [%s] ✅ MQTT PUBLISH COMPLETE", strftime_buf);
                 ESP_LOGI(TAG, "🔋 Summary: %s | Battery: %.0f%% | Load: %.0f%%",
                          metrics->status_string,
                          metrics->battery_charge,
@@ -442,10 +465,11 @@ void app_main(void)
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
     ESP_LOGI(TAG, "MQTT Broker configured: %s (disabled in strict discovery mode)", app_config.mqtt_url);
     
-    // 🕒 Initialize SNTP for accurate local time (logs, scheduled tasks)
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
+    // 🕒 Initialize SNTP for accurate local time (logs, scheduled tasks, MQTT timestamps)
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_notification_cb);
+    esp_sntp_init();
     ESP_LOGI(TAG, "🕒 SNTP initialized (pool.ntp.org)");
     
     // Get actual IP address for log message

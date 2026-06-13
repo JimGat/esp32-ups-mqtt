@@ -116,6 +116,8 @@ static volatile bool full_hid_descriptor_processed = false;
 static volatile int64_t full_hid_descriptor_process_at_ms = 0;
 static hid_descriptor_field_t full_hid_fields[96];
 static nut_runtime_map_entry_t full_hid_runtime_map[48];
+static volatile int64_t next_input_report_poll_at_ms = 0;
+static volatile bool input_report_pending = false;
 
 
 static bool usb_diag_heap_checkpoint(const char *stage)
@@ -251,6 +253,71 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
         usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, transfer->status, NULL, 0, "descriptor failed");
     }
     usb_host_transfer_free(transfer);
+}
+
+static void hid_input_report_cb(usb_transfer_t *transfer) {
+    if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
+        int setup_len = sizeof(usb_setup_packet_t);
+        int payload_len = transfer->actual_num_bytes - setup_len;
+        if (payload_len < 0) payload_len = 0;
+        
+        ESP_LOGI(TAG, "✅ HID Input Report received: raw=%d payload=%d", transfer->actual_num_bytes, payload_len);
+        
+        // Dump first 32 bytes of payload for verification
+        const uint8_t *data = transfer->data_buffer + setup_len;
+        char line[96];
+        int off = 0;
+        for (int j = 0; j < 32 && j < payload_len; j++) {
+            off += snprintf(&line[off], sizeof(line) - off, "%02x ", data[j]);
+        }
+        ESP_LOGI(TAG, "INPUT-RAW %s", line);
+
+        input_report_pending = false;
+    } else {
+        ESP_LOGW(TAG, "⚠️ HID Input Report failed: %d", transfer->status);
+        input_report_pending = false;
+    }
+    usb_host_transfer_free(transfer);
+}
+
+static void request_hid_input_report(usb_device_handle_t dev_hdl, uint8_t intf_num, uint8_t report_id) {
+    if (input_report_pending) return;
+    
+    usb_transfer_t *ctrl_xfer = NULL;
+    const size_t payload_len = 64; // Standard max report size
+    const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
+    const size_t alloc_size = xfer_size; // exact allocation
+
+    esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &ctrl_xfer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to alloc input report ctrl xfer: %s", esp_err_to_name(err));
+        return;
+    }
+    memset(ctrl_xfer->data_buffer, 0, alloc_size);
+
+    ctrl_xfer->device_handle = dev_hdl;
+    ctrl_xfer->bEndpointAddress = 0;
+    ctrl_xfer->callback = hid_input_report_cb;
+    ctrl_xfer->context = NULL;
+    ctrl_xfer->timeout_ms = 3000;
+    ctrl_xfer->num_bytes = xfer_size;
+
+    usb_setup_packet_t *setup = (usb_setup_packet_t *)ctrl_xfer->data_buffer;
+    setup->bmRequestType = USB_BM_REQUEST_TYPE_DIR_IN | USB_BM_REQUEST_TYPE_TYPE_CLASS | USB_BM_REQUEST_TYPE_RECIP_INTERFACE;
+    setup->bRequest = 0x01; // GET_REPORT
+    setup->wValue = (0x01 << 8) | report_id; // Input report (0x01), report ID
+    setup->wIndex = intf_num;
+    setup->wLength = payload_len;
+
+    err = usb_host_transfer_submit_control(usb_client, ctrl_xfer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to submit input report ctrl xfer: %s", esp_err_to_name(err));
+        usb_host_transfer_free(ctrl_xfer);
+        input_report_pending = false;
+    } else {
+        ESP_LOGI(TAG, "🔍 Requesting HID Input Report 0x%02X from UPS...", report_id);
+        input_report_pending = true;
+    }
 }
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
@@ -1477,7 +1544,16 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
                 }
                 full_hid_descriptor_processed = true;
                 descriptor_cleanup_done = true;  // Means descriptor was processed; transfer/device intentionally retained in v0.4.38.
-                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: descriptor processed; transfer/device intentionally retained for stability");
+                next_input_report_poll_at_ms = now_ms + 5000; // First poll in 5 seconds
+                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: descriptor processed; transfer/device intentionally retained. Starting input polling.");
+            }
+        }
+
+        // Periodic Input Report Polling (Report ID 0x07 for battery runtime, based on NUT map)
+        if (full_hid_descriptor_processed && ups_connected && ups_device != NULL && !input_report_pending) {
+            if (now_ms >= next_input_report_poll_at_ms) {
+                request_hid_input_report(ups_device, 0, 0x07);
+                next_input_report_poll_at_ms = now_ms + 30000; // Poll every 30 seconds
             }
         }
 

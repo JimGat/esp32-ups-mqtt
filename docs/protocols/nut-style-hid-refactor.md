@@ -642,3 +642,14 @@ v0.4.27 proved Wi-Fi/HTTP remains solid through HID interface claim/release. Thi
 Interpretation:
 - If ping/web break here, the root cause is the HID report descriptor control transfer path or descriptor callback/log volume.
 - If ping/web remain solid and payload length is ~515, descriptor-first startup is safe and the next step is to integrate this path cleanly.
+
+## v0.4.29-dev: minimal 64-byte HID report descriptor diagnostic
+
+v0.4.28 caused severe network loss / apparent reboot shortly after enabling the full HID report descriptor path. This build keeps the same claimed-interface boundary but reduces the descriptor step:
+- Request only 64 bytes (`wLength=64`) of HID report descriptor data.
+- Callback records only transfer status and lengths.
+- No hex dump, descriptor parser, NUT runtime map, telemetry polling, or MQTT.
+
+Interpretation:
+- If this still destabilizes/reboots, the issue is control transfer submission/completion itself.
+- If this remains stable, the issue is likely the full 1024-byte transfer length or heavy callback logging/parsing path.

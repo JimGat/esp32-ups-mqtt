@@ -94,6 +94,7 @@ static usb_debug_config_t debug_cfg = {
 static volatile bool descriptor_needed = false;
 static volatile bool descriptor_requested = false;
 static volatile bool descriptor_complete = false;
+static volatile bool hid_report_descriptor_only_diag = false;
 static volatile bool hid_report_descriptor_minimal_diag = false;
 static volatile usb_transfer_t *pending_descriptor_transfer = NULL;
 static volatile int diag_descriptor_status = -1;
@@ -240,6 +241,7 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
 
     usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, "descriptor submit");
     err = usb_host_transfer_submit_control(usb_client, ctrl_xfer);
+    diag_descriptor_submit_err = err;
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to submit descriptor ctrl xfer: %s", esp_err_to_name(err));
         usb_debug_record_add(USB_DEBUG_REC_ERROR, 0, err, NULL, 0, "descriptor submit failed");
@@ -604,11 +606,11 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 {
     ESP_LOGI(TAG, "DEBUG: Event callback triggered, event=%d", event_msg->event);
 
-    if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag) {
+    if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag || hid_report_descriptor_minimal_diag) {
         if (event_msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
             diag_new_dev_count++;
             ESP_LOGW(TAG, "USB_DIAG: NEW_DEV #%lu addr=%d observed", (unsigned long)diag_new_dev_count, event_msg->new_dev.address);
-            if (device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag) {
+            if (device_descriptor_only_diag || config_descriptor_only_diag || interface_claim_only_diag || hid_report_descriptor_minimal_diag) {
                 usb_device_handle_t dev_hdl = NULL;
                 esp_err_t err = usb_host_device_open(usb_client, event_msg->new_dev.address, &dev_hdl);
                 diag_open_err = err;
@@ -627,7 +629,7 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                                  dev_desc->bDeviceClass,
                                  dev_desc->bNumConfigurations);
                     }
-                    if (config_descriptor_only_diag || interface_claim_only_diag) {
+                    if (config_descriptor_only_diag || interface_claim_only_diag || hid_report_descriptor_minimal_diag) {
                         const usb_config_desc_t *config_desc = NULL;
                         err = usb_host_get_active_config_descriptor(dev_hdl, &config_desc);
                         diag_config_desc_err = err;
@@ -653,23 +655,34 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                             }
                         }
                     }
-                    if (interface_claim_only_diag) {
+                    if (interface_claim_only_diag || hid_report_descriptor_minimal_diag) {
                         err = usb_host_interface_claim(usb_client, dev_hdl, HID_INTERFACE, 0);
                         diag_claim_err = err;
                         ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: usb_host_interface_claim(intf=%d, alt=0) -> %s",
                                  HID_INTERFACE,
                                  esp_err_to_name(err));
-                        if (err == ESP_OK) {
+                        if (err == ESP_OK && interface_claim_only_diag) {
                             esp_err_t rel_err = usb_host_interface_release(usb_client, dev_hdl, HID_INTERFACE);
                             diag_release_err = rel_err;
                             ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: usb_host_interface_release(intf=%d) -> %s",
                                      HID_INTERFACE,
                                      esp_err_to_name(rel_err));
+                        } else if (err == ESP_OK && hid_report_descriptor_minimal_diag) {
+                            ups_device = dev_hdl;
+                            ups_connected = true;
+                            descriptor_needed = true;
+                            descriptor_requested = false;
+                            descriptor_complete = false;
+                            diag_release_err = ESP_ERR_INVALID_STATE;
+                            diag_close_err = ESP_ERR_INVALID_STATE;
+                            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: device left open and interface claimed for task-context descriptor request");
                         }
                     }
-                    err = usb_host_device_close(usb_client, dev_hdl);
-                    diag_close_err = err;
-                    ESP_LOGW(TAG, "USB_DEVICE_DESC_ONLY_DIAG: usb_host_device_close -> %s", esp_err_to_name(err));
+                    if (!hid_report_descriptor_minimal_diag) {
+                        err = usb_host_device_close(usb_client, dev_hdl);
+                        diag_close_err = err;
+                        ESP_LOGW(TAG, "USB_DEVICE_DESC_ONLY_DIAG: usb_host_device_close -> %s", esp_err_to_name(err));
+                    }
                 }
             } else {
                 ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: observe only; no open/claim/descriptor");
@@ -1300,6 +1313,102 @@ esp_err_t usb_host_init(void)
 
 
 
+
+
+void usb_host_hid_report_descriptor_minimal_task(void *arg)
+{
+    (void)arg;
+    client_events_observe_only_diag = false;
+    device_descriptor_only_diag = false;
+    config_descriptor_only_diag = false;
+    interface_claim_only_diag = false;
+    hid_report_descriptor_only_diag = true;
+    hid_report_descriptor_minimal_diag = true;
+    diag_new_dev_count = 0;
+    diag_dev_gone_count = 0;
+    diag_open_err = ESP_ERR_INVALID_STATE;
+    diag_device_desc_err = ESP_ERR_INVALID_STATE;
+    diag_config_desc_err = ESP_ERR_INVALID_STATE;
+    diag_claim_err = ESP_ERR_INVALID_STATE;
+    diag_release_err = ESP_ERR_INVALID_STATE;
+    diag_close_err = ESP_ERR_INVALID_STATE;
+    diag_vid = 0;
+    diag_pid = 0;
+    diag_num_interfaces = 0;
+    diag_interface_class = 0;
+    diag_descriptor_status = -1;
+    diag_descriptor_payload_len = -1;
+    diag_descriptor_raw_len = -1;
+    diag_descriptor_submit_err = ESP_ERR_INVALID_STATE;
+    pending_descriptor_transfer = NULL;
+    descriptor_needed = false;
+    descriptor_requested = false;
+    descriptor_complete = false;
+    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: task started");
+    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback claims HID interface; task submits one 64-byte HID report descriptor request; callback defers free to task");
+
+    int loop_count = 0;
+    int error_count = 0;
+    int64_t last_heartbeat_ms = 0;
+
+    while (1) {
+        loop_count++;
+
+        uint32_t event_flags = 0;
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
+        if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: lib event error: %s", esp_err_to_name(lib_err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: lib event_flags=0x%lx", (unsigned long)event_flags);
+        }
+
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(10));
+        if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
+            error_count++;
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
+        }
+
+        if (pending_descriptor_transfer != NULL) {
+            usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
+            pending_descriptor_transfer = NULL;
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: descriptor transfer freed safely in task context");
+        }
+
+        if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: submitting 64-byte HID report descriptor request from task context");
+            descriptor_requested = true;
+            request_hid_report_descriptor(ups_device, HID_INTERFACE);
+        }
+
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 10000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG heartbeat: loop=%d errors=%d new_dev=%lu dev_gone=%lu vidpid=%04X:%04X class=0x%02X open=%s devdesc=%s cfg=%s claim=%s submit=%s requested=%d complete=%d desc_status=%d payload=%d raw=%d",
+                     loop_count,
+                     error_count,
+                     (unsigned long)diag_new_dev_count,
+                     (unsigned long)diag_dev_gone_count,
+                     diag_vid,
+                     diag_pid,
+                     diag_interface_class,
+                     esp_err_to_name(diag_open_err),
+                     esp_err_to_name(diag_device_desc_err),
+                     esp_err_to_name(diag_config_desc_err),
+                     esp_err_to_name(diag_claim_err),
+                     esp_err_to_name(diag_descriptor_submit_err),
+                     descriptor_requested,
+                     descriptor_complete,
+                     diag_descriptor_status,
+                     diag_descriptor_payload_len,
+                     diag_descriptor_raw_len);
+            if (diag_new_dev_count == 0) {
+                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: still waiting for NEW_DEV event from USB host client");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
 void usb_host_interface_claim_only_task(void *arg)
 {

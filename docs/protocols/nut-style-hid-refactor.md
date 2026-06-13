@@ -638,3 +638,9 @@ Interpretation so far:
 - Stable through HID interface claim/release.
 - Unstable when HID report descriptor request machinery is armed.
 - Next investigation should avoid arming/submitting HID descriptor control transfers in the live Wi-Fi build until a raw serial boot log/reset reason confirms whether this is reboot, watchdog, or USB task starvation.
+
+## v0.4.32-dev: minimal descriptor retry with deferred transfer free armed
+
+v0.4.31 as flashed was a stable recovery/interface-claim boundary. It contained the deferred-free helper code, but did not arm the HID descriptor request path. v0.4.32 explicitly re-arms the minimal 64-byte HID report descriptor request and frees completed transfers only after `usb_host_client_handle_events()` returns in the USB task context.
+
+Expected stable heartbeat: `submit=ESP_OK requested=1 complete=1 desc_status=0 payload=64 raw=72` plus `descriptor transfer freed safely in task context`.

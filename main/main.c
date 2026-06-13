@@ -402,14 +402,14 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.26 USB-INTERFACE-CLAIM-ONLY diagnostic:
-    // On NEW_DEV, open device, read descriptors, claim+release HID interface, then close.
-    // No HID report descriptor request or telemetry polling is possible.
-    ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: open/read-desc/claim-release/close only");
-    esp_err_t usb_claim_diag_err = usb_host_register_client_only_diag();
-    ESP_LOGW(TAG, "USB_INTERFACE_CLAIM_ONLY_DIAG: install/register result=%s", esp_err_to_name(usb_claim_diag_err));
-    if (usb_claim_diag_err == ESP_OK) {
-        xTaskCreate(usb_host_interface_claim_only_task, "usb_claim", 4096, NULL, 4, NULL);
+    // v0.4.32 USB-HID-REPORT-DESCRIPTOR-MINIMAL diagnostic:
+    // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
+    // Callback defers transfer free to task context to prevent heap corruption. No polling or MQTT.
+    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: claim interface then request 64-byte HID report descriptor from task");
+    esp_err_t usb_hid_desc_diag_err = usb_host_register_client_only_diag();
+    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: install/register result=%s", esp_err_to_name(usb_hid_desc_diag_err));
+    if (usb_hid_desc_diag_err == ESP_OK) {
+        xTaskCreate(usb_host_hid_report_descriptor_minimal_task, "usb_hid_min", 6144, NULL, 4, NULL);
     }
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");

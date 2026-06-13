@@ -15,6 +15,7 @@ esp_err_t usb_host_install_only_diag(void);
 esp_err_t usb_host_register_client_only_diag(void);
 void usb_host_task(void *arg);
 void usb_host_lib_events_only_task(void *arg);
+void usb_host_client_events_observe_task(void *arg);
 bool usb_ups_is_connected(void);
 
 typedef enum {

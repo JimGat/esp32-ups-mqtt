@@ -567,3 +567,17 @@ v0.4.20 proved Wi-Fi/HTTP remains solid with USB host install plus async client 
 Interpretation:
 - If ping/web break here, the root cause is the library event pump/task scheduling.
 - If ping/web remain solid here, the root cause is specifically in client event handling or callback work during attach.
+
+## v0.4.22-dev: USB client-events observe-only diagnostic
+
+v0.4.21 proved Wi-Fi/HTTP remains solid with USB host install, client registration, and `usb_host_lib_handle_events()` only. This build enables the next boundary:
+- Wi-Fi/HTTP/OTA/SNTP remain enabled.
+- MQTT remains disabled.
+- USB host is installed and client is registered.
+- A USB task pumps both `usb_host_lib_handle_events()` and `usb_host_client_handle_events()`.
+- The USB callback is observe-only: it logs NEW_DEV/DEV_GONE and immediately returns.
+- It does not open the device, claim interface, request descriptor, or poll reports.
+
+Interpretation:
+- If ping/web break here, the root cause is client event dispatch/callback invocation itself.
+- If ping/web remain solid and NEW_DEV is observed, the root cause is in the callback's device open/descriptor path.

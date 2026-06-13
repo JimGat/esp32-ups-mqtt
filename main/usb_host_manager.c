@@ -305,6 +305,7 @@ static void resolve_usb_profile(uint16_t vid, uint16_t pid)
 static bool ups_connected = false;           // Is UPS physically connected?
 static SemaphoreHandle_t usb_mutex = NULL;   // Mutex for USB library access
 static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
+static volatile bool client_events_observe_only_diag = false;
 
 // Runtime USB debug mode. This is intentionally NOT persisted to NVS:
 // every reboot returns the bridge to normal MQTT mode so field debug cannot
@@ -567,6 +568,17 @@ esp_err_t usb_debug_request_report_safe(uint8_t report_type, uint8_t report_id, 
 static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_msg, void *arg)
 {
     ESP_LOGI(TAG, "DEBUG: Event callback triggered, event=%d", event_msg->event);
+
+    if (client_events_observe_only_diag) {
+        if (event_msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
+            ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: NEW_DEV addr=%d observed; no open/claim/descriptor", event_msg->new_dev.address);
+        } else if (event_msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
+            ESP_LOGW(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: DEV_GONE observed; no cleanup work");
+        } else {
+            ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: event=%d observed", event_msg->event);
+        }
+        return;
+    }
 
     switch (event_msg->event) {
         case USB_HOST_CLIENT_EVENT_NEW_DEV:
@@ -1181,6 +1193,45 @@ esp_err_t usb_host_init(void)
     return ESP_OK;
 }
 
+
+
+void usb_host_client_events_observe_task(void *arg)
+{
+    (void)arg;
+    client_events_observe_only_diag = true;
+    ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: task started");
+    ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: pumping lib+client events; callback observes only");
+
+    int loop_count = 0;
+    int error_count = 0;
+    int64_t last_heartbeat_ms = 0;
+
+    while (1) {
+        loop_count++;
+
+        uint32_t event_flags = 0;
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
+        if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: lib event error: %s", esp_err_to_name(lib_err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: lib event_flags=0x%lx", (unsigned long)event_flags);
+        }
+
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(10));
+        if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
+            error_count++;
+            ESP_LOGW(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
+        }
+
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 2000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG, "USB_CLIENT_EVENTS_OBSERVE_DIAG heartbeat: loop=%d errors=%d", loop_count, error_count);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
 void usb_host_lib_events_only_task(void *arg)
 {

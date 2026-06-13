@@ -623,3 +623,9 @@ v0.4.25 proved Wi-Fi/HTTP remains solid through NEW_DEV, device open, USB device
 Interpretation:
 - If ping/web break here, root cause is HID interface claim/release.
 - If ping/web remain solid and claim/release logs ESP_OK, root cause is later: HID report descriptor control transfer submission/callback.
+
+## v0.4.27-dev: interface-claim diagnostic with persistent result heartbeat
+
+v0.4.26 showed `new_dev=1` in heartbeat but the short callback burst logs were not visible in the provided output. This build keeps the same interface-claim-only boundary and stores every callback step result in persistent diagnostic state. Each 10-second heartbeat now includes VID/PID, interface count/class, and result codes for open, device descriptor, config descriptor, claim, release, and close.
+
+This prevents a dropped log burst from hiding whether the interface claim path succeeded.

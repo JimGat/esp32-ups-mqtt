@@ -136,9 +136,9 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
         descriptor_complete = (transfer->status == USB_TRANSFER_STATUS_COMPLETED);
         descriptor_needed = false;
         pending_descriptor_transfer = transfer;
-        pending_descriptor_free_delay = 5;
+        pending_descriptor_free_delay = -2;  // v0.4.34: intentionally do not free/cleanup; prove post-completion heap state
         usb_diag_heap_checkpoint("callback-before-return");
-        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (free delayed 5 task loops)",
+        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: callback status=%d raw=%d payload=%d (no cleanup/free in v0.4.34)",
                  transfer->status, transfer->actual_num_bytes, payload_len);
         return;
     }
@@ -237,7 +237,7 @@ static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t i
     usb_transfer_t *ctrl_xfer = NULL;
     const size_t payload_len = hid_report_descriptor_minimal_diag ? 64 : 1024;  // Minimal diag tests first packet only
     const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
-    const size_t alloc_size = (xfer_size + 63) & ~((size_t)63);  // ESP-IDF USB host wants 64-byte aligned allocation sizes
+    const size_t alloc_size = xfer_size;  // v0.4.34: exact allocation; do not round control transfer allocation
 
     esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &ctrl_xfer);
     if (err != ESP_OK) {
@@ -1395,33 +1395,10 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
             ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
         }
 
-        if (pending_descriptor_transfer != NULL) {
-            if (pending_descriptor_free_delay > 0) {
-                pending_descriptor_free_delay--;
-            } else {
-                usb_diag_heap_checkpoint("before-transfer-free");
-                usb_host_transfer_free((usb_transfer_t *)pending_descriptor_transfer);
-                pending_descriptor_transfer = NULL;
-                pending_descriptor_free_delay = -1;
-                usb_diag_heap_checkpoint("after-transfer-free");
-                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: descriptor transfer freed after delayed task-context cleanup");
-            }
-        }
-
-        if (descriptor_complete && !descriptor_cleanup_done && pending_descriptor_transfer == NULL && ups_device != NULL) {
-            usb_diag_heap_checkpoint("before-interface-release");
-            esp_err_t rel_err = usb_host_interface_release(usb_client, ups_device, HID_INTERFACE);
-            diag_release_err = rel_err;
-            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_interface_release(intf=%d) -> %s",
-                     HID_INTERFACE, esp_err_to_name(rel_err));
-            usb_diag_heap_checkpoint("after-interface-release-before-close");
-            esp_err_t close_err = usb_host_device_close(usb_client, ups_device);
-            diag_close_err = close_err;
-            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: usb_host_device_close -> %s", esp_err_to_name(close_err));
-            ups_device = NULL;
-            ups_connected = false;
-            descriptor_cleanup_done = true;
-            usb_diag_heap_checkpoint("after-device-close");
+        if (pending_descriptor_transfer != NULL && pending_descriptor_free_delay == -2 && !descriptor_cleanup_done) {
+            usb_diag_heap_checkpoint("post-callback-no-cleanup");
+            descriptor_cleanup_done = true;  // only suppress repeated one-shot checkpoint; no actual cleanup in v0.4.34
+            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: v0.4.34 intentionally retaining completed transfer/device to test heap stability");
         }
 
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested) {

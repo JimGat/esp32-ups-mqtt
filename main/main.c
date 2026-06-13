@@ -403,9 +403,9 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.33 USB-HID-REPORT-DESCRIPTOR-MINIMAL delayed-cleanup diagnostic:
+    // v0.4.34 USB-HID-REPORT-DESCRIPTOR-MINIMAL exact-allocation/no-cleanup diagnostic:
     // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
-    // Callback defers transfer free; task waits 5 loops, frees, releases interface, and closes device. No polling or MQTT.
+    // Uses exact control-transfer allocation and intentionally does not free/release/close after completion. No polling or MQTT.
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: claim interface then request 64-byte HID report descriptor from task");
     esp_err_t usb_hid_desc_diag_err = usb_host_register_client_only_diag();
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: install/register result=%s", esp_err_to_name(usb_hid_desc_diag_err));

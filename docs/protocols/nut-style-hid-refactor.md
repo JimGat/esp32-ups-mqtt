@@ -648,3 +648,7 @@ Expected stable heartbeat: `submit=ESP_OK requested=1 complete=1 desc_status=0 p
 ## v0.4.33-dev: delayed descriptor cleanup after callback
 
 v0.4.32 proved the 64-byte descriptor request completes and the callback returns with `status=0 raw=72 payload=64`, but freeing the transfer on the same task loop immediately after `usb_host_client_handle_events()` still led to an LwIP `LoadProhibited` panic. v0.4.33 delays transfer free by five USB task loops after the callback, then releases the HID interface and closes the device in task context. This tests whether ESP-IDF needs additional event cycles before application cleanup of a completed control transfer.
+
+## v0.4.34-dev: exact allocation and no cleanup after completion
+
+v0.4.33 showed heap integrity is OK at submit and inside the callback, but becomes BAD before delayed free/release/close. v0.4.34 removes the 64-byte-rounded transfer allocation and allocates exactly `sizeof(usb_setup_packet_t) + payload_len` bytes. It also intentionally does not free the completed transfer or release/close the device after completion, to isolate whether corruption happens from the transfer completion itself versus application cleanup.

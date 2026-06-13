@@ -403,9 +403,9 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // v0.4.40 USB-HID-REPORT-DESCRIPTOR-FULL with parsed telemetry polling:
+    // v0.4.41 USB-HID-REPORT-DESCRIPTOR-FULL with corrected APC scaling and raw hex forensics:
     // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
-    // Waits 30s, captures full 515-byte HID report descriptor, dumps/parses NUT map, then cycles through polling Reports 0x07, 0x08, and 0x0A, parsing and logging live telemetry (load, runtime). Exact allocation; no MQTT.
+    // Waits 30s, captures full 515-byte HID report descriptor, dumps/parses NUT map, then cycles through polling Reports 0x07, 0x08 (Load / 10.0), and 0x0A (Runtime in seconds / 60), logging parsed telemetry + raw hex for forensics. Exact allocation; no MQTT.
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: claim interface then request full 515-byte HID report descriptor from task");
     esp_err_t usb_hid_desc_diag_err = usb_host_register_client_only_diag();
     ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: install/register result=%s", esp_err_to_name(usb_hid_desc_diag_err));

@@ -263,27 +263,35 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
         if (payload_len < 0) payload_len = 0;
         
         const uint8_t *data = transfer->data_buffer + setup_len;
+        
+        // Always log raw hex for forensics
+        char hex_line[128];
+        int hex_off = 0;
+        int dump_len = (payload_len < 16) ? payload_len : 16;
+        for (int j = 0; j < dump_len; j++) {
+            hex_off += snprintf(&hex_line[hex_off], sizeof(hex_line) - hex_off, "%02x ", data[j]);
+        }
+        
         if (payload_len >= 2) {
             uint8_t report_id = data[0];
             if (report_id == 0x07 && payload_len >= 3) {
                 int val = data[1] | (data[2] << 8);
-                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x07 (Status/Flag) = %d", val);
-            } else if (report_id == 0x08 && payload_len >= 2) {
-                int load = data[1]; // APC load is typically 1 byte percentage
-                ESP_LOGI(TAG, "📊 TELEMETRY: UPS Load = %d%%", load);
+                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x07 (Status/Flag) = %d [RAW: %s]", val, hex_line);
+            } else if (report_id == 0x08 && payload_len >= 3) {
+                // APC HID Report 0x08 is Load scaled by 10 (Logical Min=120, Max=1380)
+                int raw_load = data[1] | (data[2] << 8);
+                float load_pct = raw_load / 10.0f;
+                ESP_LOGI(TAG, "📊 TELEMETRY: UPS Load = %.1f%% (raw=%d) [RAW: %s]", load_pct, raw_load, hex_line);
             } else if (report_id == 0x0A && payload_len >= 3) {
-                int runtime = data[1] | (data[2] << 8); // 16-bit little-endian minutes
-                ESP_LOGI(TAG, "📊 TELEMETRY: Est. Runtime = %d minutes", runtime);
+                // APC HID Report 0x0A is Estimated Runtime in SECONDS
+                int raw_seconds = data[1] | (data[2] << 8);
+                int mins = raw_seconds / 60;
+                ESP_LOGI(TAG, "📊 TELEMETRY: Est. Runtime = %d min (%d sec) [RAW: %s]", mins, raw_seconds, hex_line);
             } else {
-                char line[96];
-                int off = 0;
-                for (int j = 0; j < 16 && j < payload_len; j++) {
-                    off += snprintf(&line[off], sizeof(line) - off, "%02x ", data[j]);
-                }
-                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x%02X raw: %s", report_id, line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: Report 0x%02X [RAW: %s]", report_id, hex_line);
             }
         } else {
-            ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d", payload_len);
+            ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d [RAW: %s]", payload_len, hex_line);
         }
         input_report_pending = false;
     } else {

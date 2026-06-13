@@ -113,6 +113,9 @@ static uint8_t full_hid_descriptor[FULL_HID_DESCRIPTOR_LEN];
 static volatile int full_hid_descriptor_len = 0;
 static volatile bool full_hid_descriptor_ready = false;
 static volatile bool full_hid_descriptor_processed = false;
+static volatile int64_t full_hid_descriptor_process_at_ms = 0;
+static hid_descriptor_field_t full_hid_fields[96];
+static nut_runtime_map_entry_t full_hid_runtime_map[48];
 
 
 static bool usb_diag_heap_checkpoint(const char *stage)
@@ -153,9 +156,9 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             full_hid_descriptor_ready = true;
         }
         pending_descriptor_transfer = transfer;
-        pending_descriptor_free_delay = -2;  // v0.4.37: intentionally retain completed transfer/device while parsing full descriptor
-        usb_diag_heap_checkpoint("callback-before-return");
-        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: callback status=%d raw=%d payload=%d copied=%d (no cleanup/free in v0.4.37)",
+        pending_descriptor_free_delay = -2;  // v0.4.38: intentionally retain completed transfer/device while parsing full descriptor
+        full_hid_descriptor_process_at_ms = (esp_timer_get_time() / 1000) + 2000;
+        ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: callback status=%d raw=%d payload=%d copied=%d (no heap-check/free in v0.4.38)",
                  transfer->status, transfer->actual_num_bytes, payload_len, copy_len);
         return;
     }
@@ -252,9 +255,9 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
 
 static void request_hid_report_descriptor(usb_device_handle_t dev_hdl, uint8_t intf_num) {
     usb_transfer_t *ctrl_xfer = NULL;
-    const size_t payload_len = hid_report_descriptor_minimal_diag ? FULL_HID_DESCRIPTOR_LEN : 1024;  // v0.4.37 full SMT2200 report descriptor diagnostic
+    const size_t payload_len = hid_report_descriptor_minimal_diag ? FULL_HID_DESCRIPTOR_LEN : 1024;  // v0.4.38 full SMT2200 report descriptor diagnostic
     const size_t xfer_size = sizeof(usb_setup_packet_t) + payload_len;
-    const size_t alloc_size = xfer_size;  // v0.4.34: exact allocation; do not round control transfer allocation
+    const size_t alloc_size = xfer_size;  // exact transfer size; previous 64-byte path proved this is safest on ESP-IDF USB host
 
     esp_err_t err = usb_host_transfer_alloc(alloc_size, 0, &ctrl_xfer);
     if (err != ESP_OK) {
@@ -1394,7 +1397,7 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
     descriptor_cleanup_at_ms = 0;
     descriptor_cleanup_skipped = false;
     ESP_LOGI(TAG, "USB_HID_REPORT_DESC_MIN_DIAG: task started");
-    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: task waits 30s, requests full 515-byte descriptor, then dumps/parses in task context");
+    ESP_LOGI(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: task waits 30s, requests full 515-byte descriptor, then dumps/parses without post-callback heap walks");
 
     int loop_count = 0;
     int error_count = 0;
@@ -1421,10 +1424,8 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
         int64_t now_ms = esp_timer_get_time() / 1000;
 
         if (full_hid_descriptor_ready && !full_hid_descriptor_processed) {
-            bool heap_ok = usb_diag_heap_checkpoint("before-full-descriptor-parse");
-            if (!heap_ok) {
-                descriptor_submit_skipped = true;
-                ESP_LOGE(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: heap BAD before parse; retaining descriptor but skipping parser");
+            if (full_hid_descriptor_process_at_ms > 0 && now_ms < full_hid_descriptor_process_at_ms) {
+                // Let USB host callback unwinding and Wi-Fi tasks breathe before heavy logging/parsing.
             } else {
                 ESP_LOGI(TAG, "=== HID REPORT DESCRIPTOR FULL payload=%d expected=%d ===",
                          full_hid_descriptor_len, FULL_HID_DESCRIPTOR_LEN);
@@ -1439,45 +1440,45 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
                         }
                     }
                     ESP_LOGI(TAG, "HID-DESC %04x: %s", i, line);
+                    if ((i % 64) == 48) {
+                        vTaskDelay(pdMS_TO_TICKS(10));
+                    }
                 }
 
-                hid_descriptor_field_t fields[96];
                 size_t field_count = 0;
                 if (hid_descriptor_parse(full_hid_descriptor, full_hid_descriptor_len,
-                                         fields, sizeof(fields) / sizeof(fields[0]), &field_count)) {
+                                         full_hid_fields, sizeof(full_hid_fields) / sizeof(full_hid_fields[0]), &field_count)) {
                     ESP_LOGI(TAG, "NUT-HID: descriptor resolver found %u fields", (unsigned)field_count);
-                    nut_runtime_map_entry_t runtime_map[48];
-                    size_t runtime_count = nut_runtime_map_build(fields, field_count,
-                                                                 runtime_map, sizeof(runtime_map) / sizeof(runtime_map[0]));
+                    size_t runtime_count = nut_runtime_map_build(full_hid_fields, field_count,
+                                                                 full_hid_runtime_map, sizeof(full_hid_runtime_map) / sizeof(full_hid_runtime_map[0]));
                     ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
                     for (size_t m = 0; m < runtime_count; m++) {
                         ESP_LOGI(TAG, "NUT-MAP: %s %s report=0x%02X bit=%u size=%u path=%s",
-                                 nut_runtime_key_str(runtime_map[m].key),
-                                 hid_descriptor_report_type_str(runtime_map[m].report_type),
-                                 runtime_map[m].report_id,
-                                 runtime_map[m].bit_offset,
-                                 runtime_map[m].bit_size,
-                                 runtime_map[m].hid_path);
+                                 nut_runtime_key_str(full_hid_runtime_map[m].key),
+                                 hid_descriptor_report_type_str(full_hid_runtime_map[m].report_type),
+                                 full_hid_runtime_map[m].report_id,
+                                 full_hid_runtime_map[m].bit_offset,
+                                 full_hid_runtime_map[m].bit_size,
+                                 full_hid_runtime_map[m].hid_path);
                     }
                     for (size_t f = 0; f < field_count; f++) {
-                        if (fields[f].nut_name[0] != '\0' || strstr(fields[f].hid_path, "PresentStatus") != NULL) {
+                        if (full_hid_fields[f].nut_name[0] != '\0' || strstr(full_hid_fields[f].hid_path, "PresentStatus") != NULL) {
                             ESP_LOGI(TAG, "NUT-HID-FIELD: %s report=0x%02X bit=%u size=%u path=%s nut=%s",
-                                     hid_descriptor_report_type_str(fields[f].type),
-                                     fields[f].report_id,
-                                     fields[f].bit_offset,
-                                     fields[f].bit_size,
-                                     fields[f].hid_path,
-                                     fields[f].nut_name);
+                                     hid_descriptor_report_type_str(full_hid_fields[f].type),
+                                     full_hid_fields[f].report_id,
+                                     full_hid_fields[f].bit_offset,
+                                     full_hid_fields[f].bit_size,
+                                     full_hid_fields[f].hid_path,
+                                     full_hid_fields[f].nut_name);
                         }
                     }
                 } else {
                     ESP_LOGE(TAG, "NUT-HID: full descriptor parser failed len=%d", full_hid_descriptor_len);
                 }
-                usb_diag_heap_checkpoint("after-full-descriptor-parse");
+                full_hid_descriptor_processed = true;
+                descriptor_cleanup_done = true;  // Means descriptor was processed; transfer/device intentionally retained in v0.4.38.
+                ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: descriptor processed; transfer/device intentionally retained for stability");
             }
-            full_hid_descriptor_processed = true;
-            descriptor_cleanup_done = true;  // Means descriptor was processed; transfer/device intentionally retained in v0.4.37.
-            ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: descriptor processed; transfer/device intentionally retained for stability");
         }
 
         if (ups_connected && ups_device != NULL && descriptor_needed && !descriptor_requested && !descriptor_submit_skipped) {

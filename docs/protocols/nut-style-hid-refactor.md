@@ -664,3 +664,7 @@ v0.4.35 proved the exact-size 64-byte HID report descriptor control transfer can
 ## v0.4.37-dev: full 515-byte HID descriptor capture and NUT map parse
 
 v0.4.37 advances from the stable 64-byte exact-allocation diagnostic to the full APC SMT2200 HID report descriptor length of 515 bytes. The callback only copies the returned payload into a static buffer and records status. The USB task then emits the descriptor hex dump and runs the HID descriptor parser plus NUT runtime map builder outside callback context. The completed transfer/device are intentionally retained for this diagnostic to preserve the stability observed in v0.4.35.
+
+## v0.4.38-dev: avoid post-callback heap walks during full descriptor capture
+
+v0.4.37 proved the ESP32-S3 received the full APC SMT2200 HID report descriptor (`raw=523 payload=515 copied=515`) but crashed when the task immediately ran `heap_caps_check_integrity_all()` after callback completion. v0.4.38 preserves the full 515-byte transfer but removes heap integrity walks after the full descriptor callback, delays task-context processing briefly, moves parser/map buffers to static storage, and increases the diagnostic task stack. The transfer/device are still intentionally retained.

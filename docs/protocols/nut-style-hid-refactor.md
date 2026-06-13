@@ -593,3 +593,13 @@ v0.4.22 proved Wi-Fi/HTTP remains solid with both USB lib and client event pumps
 Interpretation:
 - If ping/web break here, root cause is device open/get-device-descriptor/close path.
 - If ping/web remain solid and VID/PID logs, root cause is later: active config descriptor, interface claim, or HID report descriptor request.
+
+## v0.4.24-dev: USB active config descriptor-only diagnostic
+
+v0.4.23 proved Wi-Fi/HTTP remains solid while opening the UPS, reading the USB device descriptor, logging VID/PID, and closing. This build advances one boundary:
+- On NEW_DEV, callback opens the device, reads the standard device descriptor, reads the active config descriptor, logs interface summary, then closes.
+- It does not claim HID interface, request HID report descriptor, or poll reports.
+
+Interpretation:
+- If ping/web break here, root cause is active config descriptor read or descriptor parsing/logging.
+- If ping/web remain solid and config/interface logs appear, root cause is later: interface claim or HID report descriptor request.

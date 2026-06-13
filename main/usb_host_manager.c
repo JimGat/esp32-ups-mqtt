@@ -307,6 +307,7 @@ static SemaphoreHandle_t usb_mutex = NULL;   // Mutex for USB library access
 static usb_device_handle_t ups_device = NULL;       // Handle to the UPS device
 static volatile bool client_events_observe_only_diag = false;
 static volatile bool device_descriptor_only_diag = false;
+static volatile bool config_descriptor_only_diag = false;
 
 // Runtime USB debug mode. This is intentionally NOT persisted to NVS:
 // every reboot returns the bridge to normal MQTT mode so field debug cannot
@@ -570,10 +571,10 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
 {
     ESP_LOGI(TAG, "DEBUG: Event callback triggered, event=%d", event_msg->event);
 
-    if (client_events_observe_only_diag || device_descriptor_only_diag) {
+    if (client_events_observe_only_diag || device_descriptor_only_diag || config_descriptor_only_diag) {
         if (event_msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
             ESP_LOGI(TAG, "USB_DIAG: NEW_DEV addr=%d observed", event_msg->new_dev.address);
-            if (device_descriptor_only_diag) {
+            if (device_descriptor_only_diag || config_descriptor_only_diag) {
                 usb_device_handle_t dev_hdl = NULL;
                 esp_err_t err = usb_host_device_open(usb_client, event_msg->new_dev.address, &dev_hdl);
                 ESP_LOGI(TAG, "USB_DEVICE_DESC_ONLY_DIAG: usb_host_device_open -> %s", esp_err_to_name(err));
@@ -587,6 +588,29 @@ static void usb_host_client_event_cb(const usb_host_client_event_msg_t *event_ms
                                  dev_desc->idProduct,
                                  dev_desc->bDeviceClass,
                                  dev_desc->bNumConfigurations);
+                    }
+                    if (config_descriptor_only_diag) {
+                        const usb_config_desc_t *config_desc = NULL;
+                        err = usb_host_get_active_config_descriptor(dev_hdl, &config_desc);
+                        ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: usb_host_get_active_config_descriptor -> %s", esp_err_to_name(err));
+                        if (err == ESP_OK && config_desc != NULL) {
+                            ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: bNumInterfaces=%d wTotalLength=%d configValue=%d",
+                                     config_desc->bNumInterfaces,
+                                     config_desc->wTotalLength,
+                                     config_desc->bConfigurationValue);
+                            int offset = 0;
+                            const usb_intf_desc_t *intf = usb_parse_interface_descriptor(config_desc, HID_INTERFACE, 0, &offset);
+                            if (intf != NULL) {
+                                ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: intf%d class=0x%02X subclass=0x%02X protocol=0x%02X endpoints=%d",
+                                         HID_INTERFACE,
+                                         intf->bInterfaceClass,
+                                         intf->bInterfaceSubClass,
+                                         intf->bInterfaceProtocol,
+                                         intf->bNumEndpoints);
+                            } else {
+                                ESP_LOGW(TAG, "USB_CONFIG_DESC_ONLY_DIAG: HID interface %d not found", HID_INTERFACE);
+                            }
+                        }
                     }
                     err = usb_host_device_close(usb_client, dev_hdl);
                     ESP_LOGI(TAG, "USB_DEVICE_DESC_ONLY_DIAG: usb_host_device_close -> %s", esp_err_to_name(err));
@@ -1217,6 +1241,47 @@ esp_err_t usb_host_init(void)
 
 
 
+
+
+void usb_host_config_descriptor_only_task(void *arg)
+{
+    (void)arg;
+    client_events_observe_only_diag = false;
+    device_descriptor_only_diag = false;
+    config_descriptor_only_diag = true;
+    ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: task started");
+    ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: callback opens device, reads device+active config descriptors, closes");
+
+    int loop_count = 0;
+    int error_count = 0;
+    int64_t last_heartbeat_ms = 0;
+
+    while (1) {
+        loop_count++;
+
+        uint32_t event_flags = 0;
+        esp_err_t lib_err = usb_host_lib_handle_events(pdMS_TO_TICKS(10), &event_flags);
+        if (lib_err != ESP_OK && lib_err != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "USB_CONFIG_DESC_ONLY_DIAG: lib event error: %s", esp_err_to_name(lib_err));
+        }
+        if (event_flags != 0) {
+            ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG: lib event_flags=0x%lx", (unsigned long)event_flags);
+        }
+
+        esp_err_t client_err = usb_host_client_handle_events(usb_client, pdMS_TO_TICKS(10));
+        if (client_err != ESP_OK && client_err != ESP_ERR_TIMEOUT) {
+            error_count++;
+            ESP_LOGW(TAG, "USB_CONFIG_DESC_ONLY_DIAG: client event error %d: %s", error_count, esp_err_to_name(client_err));
+        }
+
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if ((now_ms - last_heartbeat_ms) >= 2000) {
+            last_heartbeat_ms = now_ms;
+            ESP_LOGI(TAG, "USB_CONFIG_DESC_ONLY_DIAG heartbeat: loop=%d errors=%d", loop_count, error_count);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 
 void usb_host_device_descriptor_only_task(void *arg)
 {

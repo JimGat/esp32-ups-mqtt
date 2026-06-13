@@ -321,8 +321,8 @@ ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (Power=%s) [RAW: %s]",
             } else if (report_id == 0x14 && payload_len >= 2) {
                 int raw_replace = data[1];
                 dyn_replace_batt = raw_replace;
-                const char* replace_str = (dyn_replace_batt == 1) ? "No" : ((dyn_replace_batt == 2) ? "Yes" : "Unknown");
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Replace Battery = %s (%d) [RAW: %s]", replace_str, dyn_replace_batt, hex_line);
+                const char* batt_health_str = (dyn_replace_batt == 1) ? "Unknown" : ((dyn_replace_batt == 2) ? "Good" : "Replace");
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Battery Health = %s (%d) [RAW: %s]", batt_health_str, dyn_replace_batt, hex_line);
             } else {
                 ESP_LOGI(TAG, "📊 TELEMETRY: 0x%02X Unknown [RAW: %s]", report_id, hex_line);
             }

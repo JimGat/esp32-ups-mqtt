@@ -652,3 +652,7 @@ v0.4.32 proved the 64-byte descriptor request completes and the callback returns
 ## v0.4.34-dev: exact allocation and no cleanup after completion
 
 v0.4.33 showed heap integrity is OK at submit and inside the callback, but becomes BAD before delayed free/release/close. v0.4.34 removes the 64-byte-rounded transfer allocation and allocates exactly `sizeof(usb_setup_packet_t) + payload_len` bytes. It also intentionally does not free the completed transfer or release/close the device after completion, to isolate whether corruption happens from the transfer completion itself versus application cleanup.
+
+## v0.4.35-dev: gated 30s settle before descriptor request
+
+v0.4.34 field testing showed hot-plug after Wi-Fi/HTTP stabilization can behave differently from cold boot with UPS already attached. v0.4.35 claims the HID interface, waits 30 seconds while emitting heap integrity checkpoints, and only submits the 64-byte report descriptor request if heap integrity remains OK. If heap is already BAD before submit, it skips the descriptor request to preserve OTA access.

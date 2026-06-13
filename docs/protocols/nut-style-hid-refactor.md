@@ -516,3 +516,11 @@ v0.4.16 made the USB discovery task too aggressive and higher-priority than appr
 - USB event waits reduced to short 5 ms checks.
 - Loop delay increased to 100 ms.
 - MQTT remains disabled; broker is logged only as configured, not active.
+
+## v0.4.18-dev: network-only diagnostic build
+
+Purpose: isolate severe ping loss / intermittent web responsiveness seen in v0.4.16-v0.4.17 while waiting for USB attach.
+
+This build intentionally disables USB host initialization and the USB task entirely while keeping Wi-Fi, HTTP, OTA, SNTP, and strict no-MQTT behavior. It does not attempt descriptor discovery. Expected use:
+- If ping/web become stable, root cause is in ESP-IDF USB host install/event handling or its interaction with Wi-Fi on this board/build.
+- If ping/web remain unstable, root cause is outside the USB host/descriptor path and should be investigated in Wi-Fi/HTTP/runtime startup.

@@ -402,22 +402,11 @@ void app_main(void)
     // Startup path is network + HTTP + USB host + HID report descriptor only.
     ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
 
-    // Initialize USB Host
-    ESP_LOGI(TAG, "DEBUG: About to init USB Host");
-    ESP_LOGI(TAG, "🔌 Initializing USB Host on GPIO19/20...");
-    usb_host_set_configured_profile(ups_profile_validate(app_config.ups_profile));
-    esp_err_t usb_err = usb_host_init();
-    ESP_LOGI(TAG, "DEBUG: usb_host_init returned: 0x%x (%s)", usb_err, esp_err_to_name(usb_err));
-
-    if (usb_err == ESP_OK) {
-        ESP_LOGI(TAG, "✅ USB Host initialized, creating USB task");
-        xTaskCreate(usb_host_task, "usb_host", 6144, NULL, 4, NULL);
-    } else {
-        ESP_LOGW(TAG, "⚠️ USB Host init failed: %s, falling back to simulated data", esp_err_to_name(usb_err));
-        xTaskCreate(simulate_ups_data_task, "simulate_ups", 2048, NULL, 3, NULL);
-    }
-
-    ESP_LOGW(TAG, "STRICT_DISCOVERY: telemetry/power-event tasks disabled; USB task only fetches HID descriptor");
+    // v0.4.18 NETWORK-ONLY DIAGNOSTIC:
+    // USB host install/task intentionally disabled to isolate Wi-Fi/HTTP ping loss.
+    // If network is stable in this build, the regression is in USB host install/event handling.
+    ESP_LOGW(TAG, "NETWORK_ONLY_DIAG: USB host init disabled; Wi-Fi/HTTP stability test only");
+    ESP_LOGW(TAG, "NETWORK_ONLY_DIAG: no USB descriptor discovery in this diagnostic build");
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);

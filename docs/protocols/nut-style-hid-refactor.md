@@ -538,3 +538,18 @@ v0.4.18 proved Wi-Fi/HTTP is solid when the USB host path is disabled. This buil
 Interpretation:
 - If ping/web break here, the root cause is USB host install/PHY/interrupt side effects.
 - If ping/web remain solid here, the root cause is in USB client registration, event handling, or the USB task loop.
+
+## v0.4.20-dev: USB client registration-only diagnostic
+
+v0.4.19 proved Wi-Fi/HTTP remains mostly solid with `usb_host_install()` only. This build isolates client registration:
+- Wi-Fi/HTTP/OTA/SNTP remain enabled.
+- MQTT remains disabled.
+- `usb_host_install()` is called.
+- `usb_host_client_register()` is called with the normal async callback config.
+- No USB task is created.
+- `usb_host_lib_handle_events()` and `usb_host_client_handle_events()` are never called.
+- No descriptor request or telemetry polling is possible.
+
+Interpretation:
+- If ping/web break here, the root cause is client registration/callback setup.
+- If ping/web remain solid here, the root cause is in the USB event handling loop/task or callback work during attach.

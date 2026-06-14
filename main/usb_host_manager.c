@@ -1973,7 +1973,7 @@ void usb_host_task(void *arg)
 
 bool usb_ups_is_connected(void)
 {
-    // Report connected as long as the UPS device is claimed and present
-    return ups_connected;
+    // Report connected if the device is claimed OR if we have successfully parsed the descriptor
+    return ups_connected || descriptor_complete;
 }
 

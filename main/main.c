@@ -70,8 +70,14 @@ static void power_event_task(void *arg)
     ESP_LOGI(TAG, "⚡ Power event task started");
 
     while (1) {
-        if (mqtt_is_connected()) {
+        // CRITICAL: Do not evaluate power events until USB is fully connected and stable
+        if (mqtt_is_connected() && usb_ups_is_connected()) {
             ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
+            // Ignore until we have at least one full cycle of populated metrics
+            if (!metrics_snapshot.valid) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
+            }
             const ups_metrics_t *metrics = &metrics_snapshot;
             power_event_type_t event = power_event_classify(&event_state, metrics);
 
@@ -158,7 +164,7 @@ static void mqtt_publish_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     while (1) {
-        if (mqtt_is_connected()) {
+        if (mqtt_is_connected() && usb_ups_is_connected()) {
             ups_metrics_t metrics_snapshot = apc_hid_get_metrics_snapshot();
             const ups_metrics_t *metrics = &metrics_snapshot;
             
@@ -447,23 +453,29 @@ void app_main(void)
     ESP_LOGI(TAG, "🌐 Starting HTTP server...");
     ESP_ERROR_CHECK(http_server_start(&app_config));
 
-    // v0.4.16 STRICT DISCOVERY MODE: MQTT is intentionally not initialized.
-    // Startup path is network + HTTP + USB host + HID report descriptor only.
-    ESP_LOGW(TAG, "STRICT_DISCOVERY: MQTT disabled; descriptor discovery only");
+    // Initialize MQTT and start background tasks
+    ESP_LOGI(TAG, "🔌 Initializing MQTT connection to %s...", app_config.mqtt_url);
+    esp_err_t mqtt_err = mqtt_init(app_config.mqtt_url, app_config.mqtt_user, app_config.mqtt_pass, app_config.device_label);
+    if (mqtt_err == ESP_OK) {
+        ESP_LOGI(TAG, "✅ MQTT initialized successfully");
+        // Start power event detection task ( instant alerts for power loss/restore and low battery )
+        xTaskCreate(power_event_task, "power_event", 4096, NULL, 5, NULL);
+        // Start periodic metric publishing task
+        xTaskCreate(mqtt_publish_task, "mqtt_publish", 4096, NULL, 4, NULL);
+    } else {
+        ESP_LOGE(TAG, "❌ Failed to initialize MQTT: %s", esp_err_to_name(mqtt_err));
+    }
 
-    // v0.4.46 USB-HID-REPORT-DESCRIPTOR-FULL with dynamic HID metrics wired to MQTT event and periodic state payloads:
-    // On NEW_DEV, open/read descriptors/claim HID interface, then task submits one 64-byte HID report descriptor request.
-    // Waits 30s, captures full 515-byte HID descriptor, dumps/parses NUT map, dynamically cycles through 8 core HID UPS reports, and wires them to the central metrics struct to drive the new 8-item Web UI baseline.
-    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: claim interface then request full 515-byte HID report descriptor from task");
+    // USB HID Report Descriptor Discovery and Dynamic Polling
+    ESP_LOGI(TAG, "🔌 Initializing USB Host for HID descriptor discovery...");
     esp_err_t usb_hid_desc_diag_err = usb_host_register_client_only_diag();
-    ESP_LOGW(TAG, "USB_HID_REPORT_DESC_FULL_DIAG: install/register result=%s", esp_err_to_name(usb_hid_desc_diag_err));
     if (usb_hid_desc_diag_err == ESP_OK) {
         xTaskCreate(usb_host_hid_report_descriptor_minimal_task, "usb_hid_full", 12288, NULL, 4, NULL);
     }
 
     ESP_LOGI(TAG, "=== ✅ UPS MQTT Bridge Running ===");
     ESP_LOGI(TAG, "WiFi: Connected to %s", app_config.wifi_ssid);
-    ESP_LOGI(TAG, "MQTT Broker configured: %s (disabled in strict discovery mode)", app_config.mqtt_url);
+    ESP_LOGI(TAG, "MQTT Broker: %s", app_config.mqtt_url);
     
     // 🕒 Initialize SNTP for accurate local time (logs, scheduled tasks, MQTT timestamps)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);

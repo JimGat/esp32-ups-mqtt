@@ -730,6 +730,7 @@ void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_
         current_metrics.status.low_battery = (capacity < 20);
         
         current_metrics.last_update_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        current_metrics.valid = true; // Mark as steady-state ready after first dynamic update
         xSemaphoreGive(metrics_mutex);
     }
 }

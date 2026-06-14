@@ -312,7 +312,7 @@ ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (Power=%s) [RAW: %s]",
             } else if (report_id == 0x0D && payload_len >= 3) {
                 int raw_sec = data[1] | (data[2] << 8);
                 dyn_time_on_batt_min = raw_sec / 60;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Est. Runtime (RunTimeToEmpty) = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time Left On Battery (RunTimeToEmpty) = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
             } else if (report_id == 0x12 && payload_len >= 3) {
                 int raw_status = data[1] | (data[2] << 8);
                 dyn_charge_status = raw_status;

@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "apc_hid_parser.h"
 #include "hid_descriptor_parser.h"
 
 #ifdef __cplusplus
@@ -87,4 +88,7 @@ size_t nut_runtime_map_entry_to_json(const nut_runtime_map_entry_t *entry, char 
 bool nut_runtime_map_update_from_report(nut_runtime_map_entry_t *entries, size_t entry_count,
                                         uint8_t report_id, const uint8_t *data, size_t data_len);
 
+void nut_runtime_map_sync_to_metrics(const nut_runtime_map_entry_t *entries, size_t entry_count, ups_metrics_t *metrics);
+
 #endif /* NUT_RUNTIME_MAP_H */
+void apc_hid_apply_runtime_map(const nut_runtime_map_entry_t *entries, size_t entry_count);

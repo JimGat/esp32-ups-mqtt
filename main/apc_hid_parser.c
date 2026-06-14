@@ -1,3 +1,4 @@
+#include "nut_runtime_map.h"
 /*
  * ═══════════════════════════════════════════════════════════════════════════
  * APC HID PARSER - Architecture & Protocol Notes
@@ -686,7 +687,9 @@ bool apc_hid_parse_report(uint8_t report_id, const uint8_t *data, size_t length,
 
     /* v0.4: Unlock metrics if we locked them */
     if (use_lock && metrics_mutex != NULL) {
-        xSemaphoreGive(metrics_mutex);
+        apc_hid_sync_dynamic_fields();
+    apc_hid_update_status_string();
+    xSemaphoreGive(metrics_mutex);
     }
 
     return updated;
@@ -701,7 +704,9 @@ ups_metrics_t apc_hid_get_metrics_snapshot(void)
     }
     memcpy(&snapshot, &current_metrics, sizeof(ups_metrics_t));
     if (metrics_mutex != NULL) {
-        xSemaphoreGive(metrics_mutex);
+        apc_hid_sync_dynamic_fields();
+    apc_hid_update_status_string();
+    xSemaphoreGive(metrics_mutex);
     }
     return snapshot;
 }
@@ -731,7 +736,9 @@ void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_
         
         current_metrics.last_update_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         current_metrics.valid = true; // Mark as steady-state ready after first dynamic update
-        xSemaphoreGive(metrics_mutex);
+        apc_hid_sync_dynamic_fields();
+    apc_hid_update_status_string();
+    xSemaphoreGive(metrics_mutex);
     }
 }
 
@@ -781,3 +788,108 @@ void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buff
 }
 
 
+
+void apc_hid_apply_runtime_map(const nut_runtime_map_entry_t *entries, size_t entry_count)
+{
+    if (xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+
+    for (size_t i = 0; i < entry_count; i++) {
+        const nut_runtime_map_entry_t *e = &entries[i];
+        if (!e->has_value) continue;
+
+        float scaled_value = (float)e->last_raw_value;
+        if (e->logical_max > e->logical_min) {
+            if (e->unit_exponent < 0) {
+                for (int j = 0; j > e->unit_exponent; j--) scaled_value /= 10.0f;
+            } else if (e->unit_exponent > 0) {
+                for (int j = 0; j < e->unit_exponent; j++) scaled_value *= 10.0f;
+            }
+        }
+
+        switch (e->key) {
+            case NUT_RUNTIME_KEY_BATTERY_CHARGE:
+                current_metrics.battery_charge = scaled_value;
+                break;
+            case NUT_RUNTIME_KEY_BATTERY_RUNTIME:
+                current_metrics.battery_runtime = scaled_value;
+                break;
+            case NUT_RUNTIME_KEY_BATTERY_VOLTAGE:
+                current_metrics.battery_voltage = scaled_value;
+                break;
+            case NUT_RUNTIME_KEY_INPUT_VOLTAGE:
+                current_metrics.input_voltage = scaled_value;
+                break;
+            case NUT_RUNTIME_KEY_LOAD_PERCENT:
+                current_metrics.load_percent = scaled_value;
+                break;
+            case NUT_RUNTIME_KEY_STATUS_ACPRESENT:
+                current_metrics.status.online = (e->last_raw_value != 0);
+                current_metrics.status.discharging = !current_metrics.status.online;
+                break;
+            case NUT_RUNTIME_KEY_STATUS_DISCHARGING:
+                current_metrics.status.discharging = (e->last_raw_value != 0);
+                current_metrics.status.online = !current_metrics.status.discharging;
+                break;
+            case NUT_RUNTIME_KEY_STATUS_CHARGING:
+                current_metrics.status.charging = (e->last_raw_value != 0);
+                break;
+            case NUT_RUNTIME_KEY_STATUS_LOW_BATTERY:
+                current_metrics.status.low_battery = (e->last_raw_value != 0);
+                break;
+            case NUT_RUNTIME_KEY_STATUS_REPLACE_BATTERY:
+                current_metrics.status.replace_battery = (e->last_raw_value != 0);
+                break;
+            case NUT_RUNTIME_KEY_STATUS_OVERLOAD:
+                current_metrics.status.overload = (e->last_raw_value != 0);
+                break;
+            default:
+                break;
+        }
+    }
+    
+    if (current_metrics.battery_charge >= 0 || current_metrics.battery_runtime >= 0 || current_metrics.status.online) {
+        current_metrics.valid = true;
+    }
+    
+    apc_hid_sync_dynamic_fields();
+    apc_hid_update_status_string();
+    xSemaphoreGive(metrics_mutex);
+}
+
+void apc_hid_sync_dynamic_fields(void)
+{
+    if (xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    
+    // Sync core NUT metrics to legacy dynamic fields expected by Web UI / MQTT
+    current_metrics.dynamic_ac_present = current_metrics.status.online ? 1 : 0;
+    current_metrics.dynamic_load_percent = current_metrics.load_percent;
+    current_metrics.dynamic_runtime_min = (int)(current_metrics.battery_runtime / 60.0f);
+    current_metrics.dynamic_battery_capacity = (int)current_metrics.battery_charge;
+    
+    // Map battery health from replace_battery status
+    if (current_metrics.status.replace_battery) {
+        current_metrics.dynamic_replace_battery = 3; // REPLACE
+    } else {
+        current_metrics.dynamic_replace_battery = 2; // GOOD
+    }
+    
+    apc_hid_sync_dynamic_fields();
+    apc_hid_update_status_string();
+    xSemaphoreGive(metrics_mutex);
+}
+
+void apc_hid_update_status_string(void)
+{
+    if (xSemaphoreTake(metrics_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    
+    if (current_metrics.status.online) {
+        strlcpy(current_metrics.status_string, "ON LINE", sizeof(current_metrics.status_string));
+    } else if (current_metrics.status.discharging) {
+        strlcpy(current_metrics.status_string, "ON BATTERY", sizeof(current_metrics.status_string));
+    } else {
+        strlcpy(current_metrics.status_string, "UNKNOWN", sizeof(current_metrics.status_string));
+    }
+    strlcpy(current_metrics.status_confidence, "confirmed", sizeof(current_metrics.status_confidence));
+    
+    xSemaphoreGive(metrics_mutex);
+}

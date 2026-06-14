@@ -106,3 +106,5 @@ void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_
 void apc_hid_format_status(const ups_status_t *status, char *buffer, size_t buffer_size);
 
 #endif // APC_HID_PARSER_H
+void apc_hid_sync_dynamic_fields(void);
+void apc_hid_update_status_string(void);

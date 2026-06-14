@@ -119,7 +119,33 @@ static nut_runtime_map_entry_t full_hid_runtime_map[48];
 static size_t full_hid_runtime_map_count = 0;
 static volatile int64_t next_input_report_poll_at_ms = 0;
 static volatile bool input_report_pending = false;
-static const uint8_t poll_reports[] = {0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x12, 0x14};
+// DYNAMIC POLLING: We will extract unique Input Report IDs from the parsed HID descriptor map
+// This replaces the hardcoded poll_reports array for true vendor-agnostic operation.
+#define MAX_UNIQUE_REPORTS 32
+static uint8_t unique_reports[MAX_UNIQUE_REPORTS];
+static size_t num_unique_reports = 0;
+static bool dynamic_poll_initialized = false;
+
+static void init_dynamic_polling(void) {
+    if (dynamic_poll_initialized) return;
+    num_unique_reports = 0;
+    for (size_t i = 0; i < full_hid_runtime_map_count; i++) {
+        if (full_hid_runtime_map[i].report_type == HID_DESC_REPORT_INPUT) {
+            bool found = false;
+            for (size_t j = 0; j < num_unique_reports; j++) {
+                if (unique_reports[j] == full_hid_runtime_map[i].report_id) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && num_unique_reports < MAX_UNIQUE_REPORTS) {
+                unique_reports[num_unique_reports++] = full_hid_runtime_map[i].report_id;
+            }
+        }
+    }
+    dynamic_poll_initialized = true;
+    ESP_LOGI(TAG, "🗺️ DYNAMIC POLLING: Found %zu unique Input Reports to poll", num_unique_reports);
+}
 static volatile size_t current_poll_idx = 0;
 
 // Dynamic HID metrics cache (updated per-report, flushed to apc_hid_parser periodically)
@@ -286,56 +312,16 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
         
         if (payload_len >= 2) {
             uint8_t report_id = data[0];
-            if (report_id == 0x07 && payload_len >= 3) {
-                uint16_t flags = data[1] | (data[2] << 8);
-                // HID Spec: Bit 2 (0x0004) = AC Present, Bit 1 (0x0002) = Discharging, Bit 3 (0x0008) = Battery Present
-                bool on_line = (flags & 0x0004) != 0;
-                dyn_ac_present = on_line ? 1 : 0;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (AC Present=%d, Discharging=%d -> Power=%s) [RAW: %s]", 
-                         flags, (flags & 0x0004) ? 1 : 0, (flags & 0x0002) ? 1 : 0, on_line ? "ON LINE" : "ON BATTERY", hex_line);
-            } else if (report_id == 0x08 && payload_len >= 3) {
-                int raw_load = data[1] | (data[2] << 8);
-                dyn_load_pct = raw_load / 10.0f;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load (HID Placeholder) = %.1f%% (raw=%d) [RAW: %s]", dyn_load_pct, raw_load, hex_line);
-            } else if (report_id == 0x09 && payload_len >= 3) {
-                int raw_val = data[1] | (data[2] << 8);
-                dyn_nominal_flow = raw_val;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x09 Nominal/Flow = %d [RAW: %s]", dyn_nominal_flow, hex_line);
-            } else if (report_id == 0x0A && payload_len >= 3) {
-                int raw_sec = data[1] | (data[2] << 8);
-                dyn_runtime_min = raw_sec / 60;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0A Time on Battery / Alt = %d min (%d sec) [RAW: %s]", dyn_runtime_min, raw_sec, hex_line);
-            } else if (report_id == 0x0C && payload_len >= 2) {
-                // APC often sends capacity as a single byte
-                int raw_cap = data[1];
-                dyn_battery_capacity = raw_cap;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0C Battery Capacity = %d%% [RAW: %s]", dyn_battery_capacity, hex_line);
-            } else if (report_id == 0x0D && payload_len >= 3) {
-                int raw_sec = data[1] | (data[2] << 8);
-                dyn_time_on_batt_min = raw_sec / 60;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x0D Time Left On Battery (RunTimeToEmpty) = %d min (%d sec) [RAW: %s]", dyn_time_on_batt_min, raw_sec, hex_line);
-            } else if (report_id == 0x12 && payload_len >= 3) {
-                int raw_status = data[1] | (data[2] << 8);
-                dyn_charge_status = raw_status;
-                const char* charge_str = (dyn_charge_status == 65535) ? "Unknown/N/A" : ((dyn_charge_status == 2) ? "Charging" : "Other");
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x12 Charge Status = %s (%d) [RAW: %s]", charge_str, dyn_charge_status, hex_line);
-            } else if (report_id == 0x14 && payload_len >= 2) {
-                int raw_replace = data[1];
-                dyn_replace_batt = raw_replace;
-                const char* batt_health_str = (dyn_replace_batt == 1) ? "Unknown" : ((dyn_replace_batt == 2) ? "Good" : "Replace");
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x14 Battery Health = %s (%d) [RAW: %s]", batt_health_str, dyn_replace_batt, hex_line);
-            } else {
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x%02X Unknown [RAW: %s]", report_id, hex_line);
-            }
+            
+            // DYNAMIC MAPPING: Update the runtime map with the raw data, then sync to metrics
+            nut_runtime_map_update_from_report(full_hid_runtime_map, full_hid_runtime_map_count, report_id, data, payload_len);
+            apc_hid_apply_runtime_map(full_hid_runtime_map, full_hid_runtime_map_count);
+            
+            // Log the dynamic update for visibility
+            ESP_LOGI(TAG, "📊 DYNAMIC MAP: Updated metrics from Report 0x%02X", report_id);
         } else {
-            ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d [RAW: %s]", payload_len, hex_line);
+            ESP_LOGW(TAG, "⚠️ HID Input Report payload too short: %d", payload_len);
         }
-        // Flush cached dynamic metrics to the central parser
-        apc_hid_update_dynamic_metrics(
-            (int)dyn_ac_present, (float)dyn_load_pct, (int)dyn_nominal_flow,
-            (int)dyn_runtime_min, (int)dyn_battery_capacity, (int)dyn_time_on_batt_min,
-            (int)dyn_charge_status, (int)dyn_replace_batt
-        );
         input_report_pending = false;
     } else {
         ESP_LOGW(TAG, "⚠️ HID Input Report failed: %d", transfer->status);
@@ -1613,14 +1599,16 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
             }
         }
 
-        // Periodic Input Report Polling (Complete HID UPS Golden Set)
+        // Periodic Input Report Polling (Dynamic, Vendor-Agnostic)
         if (full_hid_descriptor_processed && ups_connected && ups_device != NULL && !input_report_pending) {
-            if (now_ms >= next_input_report_poll_at_ms) {
-                uint8_t target_report = poll_reports[current_poll_idx];
+            init_dynamic_polling(); // Ensure unique_reports is populated
+            
+            if (now_ms >= next_input_report_poll_at_ms && num_unique_reports > 0) {
+                uint8_t target_report = unique_reports[current_poll_idx];
                 request_hid_input_report(ups_device, 0, target_report);
                 
-                current_poll_idx = (current_poll_idx + 1) % (sizeof(poll_reports) / sizeof(poll_reports[0]));
-                next_input_report_poll_at_ms = now_ms + 4000; // 4s per report = 32s total cycle
+                current_poll_idx = (current_poll_idx + 1) % num_unique_reports;
+                next_input_report_poll_at_ms = now_ms + 4000; // 4s per report
             }
         }
 

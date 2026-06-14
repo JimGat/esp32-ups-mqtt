@@ -115,7 +115,7 @@ esp_err_t config_load(app_config_t *config)
 {
     memset(config, 0, sizeof(*config));
     config->publish_interval_ms = CONFIG_MQTT_PUBLISH_INTERVAL_MS;
-    config->ups_profile = UPS_PROFILE_AUTO;
+    // UPS profile is always auto-detected now
     strlcpy(config->provisioning_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->provisioning_pass));
     strlcpy(config->web_pass, DEFAULT_PROVISIONING_PASSWORD, sizeof(config->web_pass));
 
@@ -131,8 +131,7 @@ esp_err_t config_load(app_config_t *config)
         len = sizeof(config->web_pass);   nvs_get_str(nvs, "web_pass",  config->web_pass,  &len);
         len = sizeof(config->device_label); nvs_get_str(nvs, "device_label", config->device_label, &len);
         nvs_get_u32(nvs, "pub_interval", &config->publish_interval_ms);
-        nvs_get_u8(nvs, "ups_profile", &config->ups_profile);
-        config->ups_profile = (uint8_t)ups_profile_validate(config->ups_profile);
+        // NUT-Style: Always auto-detected from HID descriptor
         nvs_close(nvs);
         if (config->provisioning_pass[0] == '\0') {
             const char *fallback_pass = config->web_pass[0] ? config->web_pass : DEFAULT_PROVISIONING_PASSWORD;
@@ -171,7 +170,6 @@ static esp_err_t config_save(const app_config_t *config)
     nvs_set_str(nvs, "web_pass",  config->web_pass);
     nvs_set_str(nvs, "device_label", config->device_label);
     nvs_set_u32(nvs, "pub_interval", config->publish_interval_ms);
-    nvs_set_u8(nvs, "ups_profile", ups_profile_validate(config->ups_profile));
 
     err = nvs_commit(nvs);
     nvs_close(nvs);
@@ -354,18 +352,9 @@ static esp_err_t root_handler(httpd_req_t *req)
     snprintf(buf, 1024,
         "<div class='card'><h2>Device Identification</h2>"
         "<label>Device Label (e.g., 'UPS Server Room')</label><input name='device_label' value='%s'>"
-        "<label>UPS Make / Model Profile</label>"
-        "<select name='ups_profile'>"
-        "<option value='0' %s>Auto Detect (best effort)</option>"
-        "<option value='1' %s>APC Smart-UPS SMT2200</option>"
-        "<option value='2' %s>Generic APC HID</option>"
-        "</select>"
-        "<p class='muted'>Profiles control report polling and decoding. Auto selects SMT2200 for APC VID:PID 051D:0003; otherwise generic APC HID.</p>"
+        "<p class='muted'>True NUT-Style Auto-Detection: Parses the HID descriptor to dynamically map all available metrics. No manual profile selection needed.</p>"
         "</div>",
-        label_esc,
-        current_config->ups_profile == UPS_PROFILE_AUTO ? "selected" : "",
-        current_config->ups_profile == UPS_PROFILE_APC_SMT2200 ? "selected" : "",
-        current_config->ups_profile == UPS_PROFILE_APC_GENERIC_HID ? "selected" : "");
+        label_esc);
     httpd_resp_sendstr_chunk(req, buf);
 
     /* Interval */
@@ -418,7 +407,7 @@ static esp_err_t status_handler(httpd_req_t *req)
             "<tr><th>Active Profile</th><td class='val'>%s / NUT-style HID</td></tr>"
             "<tr><th>Transport Health</th><td class='val'>%s</td></tr>"
             "<tr><th>Last Poll Age</th><td class='val'>%lu ms</td></tr>",
-            ups_profile_name(apc_hid_parser_get_profile()),
+            "Auto-Detected (NUT Dynamic)",
             transport_health,
             (unsigned long)last_poll_age_ms);
         httpd_resp_sendstr_chunk(req, buf);
@@ -734,7 +723,7 @@ static esp_err_t metrics_handler(httpd_req_t *req)
         m->status_string,
         m->status.online ? "online" : "offline",
         m->status_confidence,
-        ups_profile_name(apc_hid_parser_get_profile()),
+        "Auto-Detected (NUT Dynamic)",
         transport_health,
         (unsigned long)last_poll_age_ms,
         (unsigned long)stats.poll_cycles_completed,
@@ -807,12 +796,6 @@ static esp_err_t save_handler(httpd_req_t *req)
     }
     if (get_form_value(body, "device_label", val, sizeof(val)))
         strlcpy(new_config.device_label, val, sizeof(new_config.device_label));
-    if (get_form_value(body, "ups_profile", val, sizeof(val))) {
-        int profile = atoi(val);
-        if (profile >= UPS_PROFILE_AUTO && profile <= UPS_PROFILE_APC_GENERIC_HID) {
-            new_config.ups_profile = (uint8_t)profile;
-        }
-    }
     if (get_form_value(body, "interval", val, sizeof(val))) {
         int secs = atoi(val);
         if (secs >= 5 && secs <= 300)

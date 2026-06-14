@@ -567,7 +567,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         "    r.push('<tr><th>Battery Capacity</th><td>'+m.dyn_capacity+'%</td></tr>');"
         "    r.push('<tr><th>Time on Battery</th><td>'+m.dyn_time_on_batt+' min</td></tr>');"
         "    r.push('<tr><th>Charge Status (0x12)</th><td>'+m.dyn_charge_status+'</td></tr>');"
-        "    r.push('<tr><th>Battery Health (0x14)</th><td>'+(m.dyn_replace_batt==2?'<span style=\\'color:#f33\\'>YES</span>':'No')+'</td></tr>');"
+        "    r.push('<tr><th>Battery Health (0x14)</th><td>'+(m.dyn_replace_batt==3?'<span style=\\'color:#f33\\'>REPLACE</span>':(m.dyn_replace_batt==2?'<span style=\\'color:#3f3\\'>GOOD</span>':'Unknown'))+'</td></tr>');"
         "    t.innerHTML=r.join('');"
         "  };"
         "  x.send();"

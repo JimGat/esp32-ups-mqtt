@@ -1972,6 +1972,7 @@ void usb_host_task(void *arg)
 
 bool usb_ups_is_connected(void)
 {
-    return ups_connected;
+    // Report connected only after we have successfully captured the HID Descriptor
+    return descriptor_complete;
 }
 

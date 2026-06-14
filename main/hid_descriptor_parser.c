@@ -189,31 +189,41 @@ static void build_path(const collection_stack_t *stack, usage_ref_t usage, char 
 static void map_nut_name(const char *path, uint16_t page, uint16_t id, char *out, size_t out_size)
 {
     const char *name = "";
-    if (strstr(path, ".PresentStatus.ACPresent") != NULL || (page == 0x84 && id == 0x53)) {
-        name = "ups.status.acpresent";
-    } else if (strstr(path, ".PresentStatus.Charging") != NULL || (page == 0x84 && id == 0x57)) {
-        name = "ups.status.charging";
-    } else if (strstr(path, ".PresentStatus.Discharging") != NULL || (page == 0x84 && id == 0x58)) {
-        name = "ups.status.discharging";
-    } else if (strstr(path, ".PresentStatus.BelowRemainingCapacityLimit") != NULL || (page == 0x84 && id == 0x56)) {
-        name = "ups.status.low_battery";
-    } else if (strstr(path, ".PresentStatus.Overload") != NULL || (page == 0x84 && id == 0x6B)) {
-        name = "ups.status.overload";
-    } else if (strstr(path, ".PresentStatus.NeedReplacement") != NULL || (page == 0x84 && id == 0x5A)) {
-        name = "ups.status.replace_battery";
-    } else if (strstr(path, ".APCLineFailCause") != NULL || (page == 0x84 && id == 0x83)) {
-        name = "input.transfer.reason";
-    } else if (strstr(path, ".RemainingCapacity") != NULL || (page == 0x84 && (id == 0x66 || id == 0x35))) {
-        name = "battery.charge";
-    } else if (strstr(path, ".RunTimeToEmpty") != NULL || (page == 0x84 && (id == 0x68 || id == 0x36))) {
-        name = "battery.runtime";
-    } else if (strstr(path, ".Input.Voltage") != NULL || (page == 0x84 && id == 0x30)) {
-        name = "input.voltage";
-    } else if (strstr(path, ".Battery.Voltage") != NULL || strstr(path, ".PowerSummary.Voltage") != NULL || (page == 0x84 && id == 0x4C)) {
-        name = "battery.voltage";
-    } else if (strstr(path, ".PercentLoad") != NULL || (page == 0x84 && id == 0x6F)) {
-        name = "load.percent";
+    
+    // Direct Usage ID mapping for Page 0x84 (Power Device Page) - Most reliable for APC/CyberPower
+    if (page == 0x84) {
+        switch (id) {
+            case 0x42: case 0x53: name = "ups.status.acpresent"; break;
+            case 0x57: name = "ups.status.charging"; break;
+            case 0x58: name = "ups.status.discharging"; break;
+            case 0x56: name = "ups.status.low_battery"; break;
+            case 0x6B: name = "ups.status.overload"; break;
+            case 0x5A: name = "ups.status.replace_battery"; break;
+            case 0x83: name = "input.transfer.reason"; break;
+            case 0x35: case 0x66: name = "battery.charge"; break;
+            case 0x36: case 0x68: name = "battery.runtime"; break;
+            case 0x30: case 0x40: name = "battery.voltage"; break;
+            case 0x2A: case 0x6F: name = "load.percent"; break;
+            default: break;
+        }
     }
+    
+    // Fallback to path matching for non-0x84 pages or unmapped 0x84 IDs
+    if (strlen(name) == 0) {
+        if (strstr(path, ".PresentStatus.ACPresent") != NULL) name = "ups.status.acpresent";
+        else if (strstr(path, ".PresentStatus.Charging") != NULL) name = "ups.status.charging";
+        else if (strstr(path, ".PresentStatus.Discharging") != NULL) name = "ups.status.discharging";
+        else if (strstr(path, ".PresentStatus.BelowRemainingCapacityLimit") != NULL) name = "ups.status.low_battery";
+        else if (strstr(path, ".PresentStatus.Overload") != NULL) name = "ups.status.overload";
+        else if (strstr(path, ".PresentStatus.NeedReplacement") != NULL) name = "ups.status.replace_battery";
+        else if (strstr(path, ".APCLineFailCause") != NULL) name = "input.transfer.reason";
+        else if (strstr(path, ".RemainingCapacity") != NULL) name = "battery.charge";
+        else if (strstr(path, ".RunTimeToEmpty") != NULL) name = "battery.runtime";
+        else if (strstr(path, ".Input.Voltage") != NULL) name = "input.voltage";
+        else if (strstr(path, ".Battery.Voltage") != NULL || strstr(path, ".PowerSummary.Voltage") != NULL) name = "battery.voltage";
+        else if (strstr(path, ".PercentLoad") != NULL) name = "load.percent";
+    }
+    
     snprintf(out, out_size, "%s", name);
 }
 

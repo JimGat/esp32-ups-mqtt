@@ -561,7 +561,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         "    if(!t)return;"
         "    var r=[];"
         "    r.push('<tr><th>Power State</th><td>'+(m.dyn_ac==1?'<span style=\\'color:#3f3\\'>ON LINE</span>':'<span style=\\'color:#f33\\'>ON BATTERY</span>')+'</td></tr>');"
-        "    r.push('<tr><th>Load</th><td>'+m.dyn_load+'%</td></tr>');"
+        "    r.push('<tr><th>Load (0x08 HID Placeholder)</th><td>'+m.dyn_load+'% <small>(APC firmware quirk)</small></td></tr>');"
         "    r.push('<tr><th>Nominal/Flow (0x09)</th><td>'+m.dyn_nominal+'</td></tr>');"
         "    r.push('<tr><th>Time Left On Battery (0x0D)</th><td>'+m.dyn_time_on_batt+' min</td></tr>');"
         "    r.push('<tr><th>Battery Capacity</th><td>'+m.dyn_capacity+'%</td></tr>');"

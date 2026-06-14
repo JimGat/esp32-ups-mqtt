@@ -36,7 +36,7 @@ static void sntp_time_sync_notification_cb(struct timeval *tv)
     time_t now;
     struct tm timeinfo;
     time(&now);
-    setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1); // Jim's US Central Time
+    setenv("TZ", "UTC0", 1); // UTC Time
     tzset();
     localtime_r(&now, &timeinfo);
     char strftime_buf[64];
@@ -307,7 +307,7 @@ static void mqtt_publish_task(void *arg)
                 time_t now;
                 struct tm timeinfo;
                 time(&now);
-                setenv("TZ", "CST6CDT,M3.2.0,M11.1.0", 1); // US Central Time
+                setenv("TZ", "UTC0", 1); // UTC Time
                 tzset();
                 localtime_r(&now, &timeinfo);
                 char strftime_buf[32];

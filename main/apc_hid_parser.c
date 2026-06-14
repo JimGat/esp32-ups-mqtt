@@ -847,7 +847,18 @@ void apc_hid_apply_runtime_map(const nut_runtime_map_entry_t *entries, size_t en
         }
     }
     
-    if (current_metrics.battery_charge >= 0 || current_metrics.battery_runtime >= 0 || current_metrics.status.online) {
+    bool has_core_data = false;
+    for (size_t i = 0; i < entry_count; i++) {
+        if (entries[i].has_value && (entries[i].key == NUT_RUNTIME_KEY_BATTERY_CHARGE || 
+                                     entries[i].key == NUT_RUNTIME_KEY_BATTERY_RUNTIME ||
+                                     entries[i].key == NUT_RUNTIME_KEY_STATUS_ACPRESENT ||
+                                     entries[i].key == NUT_RUNTIME_KEY_STATUS_DISCHARGING)) {
+            has_core_data = true;
+            break;
+        }
+    }
+    
+    if (has_core_data || current_metrics.status.online || current_metrics.status.discharging) {
         current_metrics.valid = true;
     }
     

@@ -186,32 +186,32 @@ static void build_path(const collection_stack_t *stack, usage_ref_t usage, char 
     }
 }
 
-static void map_nut_name(const char *path, char *out, size_t out_size)
+static void map_nut_name(const char *path, uint16_t page, uint16_t id, char *out, size_t out_size)
 {
     const char *name = "";
-    if (strstr(path, ".PresentStatus.ACPresent") != NULL) {
+    if (strstr(path, ".PresentStatus.ACPresent") != NULL || (page == 0x84 && id == 0x53)) {
         name = "ups.status.acpresent";
-    } else if (strstr(path, ".PresentStatus.Charging") != NULL) {
+    } else if (strstr(path, ".PresentStatus.Charging") != NULL || (page == 0x84 && id == 0x57)) {
         name = "ups.status.charging";
-    } else if (strstr(path, ".PresentStatus.Discharging") != NULL) {
+    } else if (strstr(path, ".PresentStatus.Discharging") != NULL || (page == 0x84 && id == 0x58)) {
         name = "ups.status.discharging";
-    } else if (strstr(path, ".PresentStatus.BelowRemainingCapacityLimit") != NULL) {
+    } else if (strstr(path, ".PresentStatus.BelowRemainingCapacityLimit") != NULL || (page == 0x84 && id == 0x56)) {
         name = "ups.status.low_battery";
-    } else if (strstr(path, ".PresentStatus.Overload") != NULL) {
+    } else if (strstr(path, ".PresentStatus.Overload") != NULL || (page == 0x84 && id == 0x6B)) {
         name = "ups.status.overload";
-    } else if (strstr(path, ".PresentStatus.NeedReplacement") != NULL) {
+    } else if (strstr(path, ".PresentStatus.NeedReplacement") != NULL || (page == 0x84 && id == 0x5A)) {
         name = "ups.status.replace_battery";
-    } else if (strstr(path, ".APCLineFailCause") != NULL) {
+    } else if (strstr(path, ".APCLineFailCause") != NULL || (page == 0x84 && id == 0x83)) {
         name = "input.transfer.reason";
-    } else if (strstr(path, ".RemainingCapacity") != NULL) {
+    } else if (strstr(path, ".RemainingCapacity") != NULL || (page == 0x84 && (id == 0x66 || id == 0x35))) {
         name = "battery.charge";
-    } else if (strstr(path, ".RunTimeToEmpty") != NULL) {
+    } else if (strstr(path, ".RunTimeToEmpty") != NULL || (page == 0x84 && (id == 0x68 || id == 0x36))) {
         name = "battery.runtime";
-    } else if (strstr(path, ".Input.Voltage") != NULL) {
+    } else if (strstr(path, ".Input.Voltage") != NULL || (page == 0x84 && id == 0x30)) {
         name = "input.voltage";
-    } else if (strstr(path, ".Battery.Voltage") != NULL || strstr(path, ".PowerSummary.Voltage") != NULL) {
+    } else if (strstr(path, ".Battery.Voltage") != NULL || strstr(path, ".PowerSummary.Voltage") != NULL || (page == 0x84 && id == 0x4C)) {
         name = "battery.voltage";
-    } else if (strstr(path, ".PercentLoad") != NULL) {
+    } else if (strstr(path, ".PercentLoad") != NULL || (page == 0x84 && id == 0x6F)) {
         name = "load.percent";
     }
     snprintf(out, out_size, "%s", name);
@@ -268,7 +268,7 @@ static void add_main_fields(hid_desc_report_type_t type, uint8_t main_flags,
             field->logical_max = globals->logical_max;
             field->unit_exponent = globals->unit_exponent;
             build_path(stack, usage, field->hid_path, sizeof(field->hid_path));
-            map_nut_name(field->hid_path, field->nut_name, sizeof(field->nut_name));
+            map_nut_name(field->hid_path, field->usage_page, field->usage_id, field->nut_name, sizeof(field->nut_name));
             (*field_count)++;
         }
         offsets[report_id] = (uint16_t)(offsets[report_id] + globals->report_size);

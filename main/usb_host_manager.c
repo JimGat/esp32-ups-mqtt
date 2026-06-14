@@ -144,7 +144,14 @@ static void init_dynamic_polling(void) {
         }
     }
     dynamic_poll_initialized = true;
-    ESP_LOGI(TAG, "🗺️ DYNAMIC POLLING: Found %zu unique Input Reports to poll", num_unique_reports);
+    if (num_unique_reports < 6) {
+        ESP_LOGW(TAG, "⚠️ DYNAMIC MAP sparse (%zu entries), falling back to known-good APC polling to ensure telemetry", full_hid_runtime_map_count);
+        num_unique_reports = 0;
+        const uint8_t fallback[] = {0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x12, 0x14};
+        for (size_t i = 0; i < sizeof(fallback); i++) unique_reports[num_unique_reports++] = fallback[i];
+    } else {
+        ESP_LOGI(TAG, "🗺️ DYNAMIC POLLING: Found %zu unique Input Reports to poll", num_unique_reports);
+    }
 }
 static volatile size_t current_poll_idx = 0;
 

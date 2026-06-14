@@ -723,6 +723,12 @@ void apc_hid_update_dynamic_metrics(int ac_present, float load_pct, int nominal_
         current_metrics.dynamic_time_on_battery_min = time_on_batt_min;
         current_metrics.dynamic_charge_status = charge_status;
         current_metrics.dynamic_replace_battery = replace_batt;
+        
+        // CRITICAL: Update core status flags so power_event_task can detect transitions instantly
+        current_metrics.status.online = (ac_present == 1);
+        current_metrics.status.discharging = (ac_present == 0);
+        current_metrics.status.low_battery = (capacity < 20);
+        
         current_metrics.last_update_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         xSemaphoreGive(metrics_mutex);
     }

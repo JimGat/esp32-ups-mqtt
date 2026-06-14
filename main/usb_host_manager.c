@@ -288,11 +288,11 @@ static void hid_input_report_cb(usb_transfer_t *transfer) {
             uint8_t report_id = data[0];
             if (report_id == 0x07 && payload_len >= 3) {
                 uint16_t flags = data[1] | (data[2] << 8);
-                // Bit 3 (0x08) is Online, Bit 2 (0x04) is often persistent Battery Present
-bool on_line = (flags & 0x0008) != 0;
-dyn_ac_present = on_line ? 1 : 0;
-ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (Power=%s) [RAW: %s]", 
-         flags, on_line ? "ON LINE" : "ON BATTERY", hex_line);
+                // HID Spec: Bit 2 (0x0004) = AC Present, Bit 1 (0x0002) = Discharging, Bit 3 (0x0008) = Battery Present
+                bool on_line = (flags & 0x0004) != 0;
+                dyn_ac_present = on_line ? 1 : 0;
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (AC Present=%d, Discharging=%d -> Power=%s) [RAW: %s]", 
+                         flags, (flags & 0x0004) ? 1 : 0, (flags & 0x0002) ? 1 : 0, on_line ? "ON LINE" : "ON BATTERY", hex_line);
             } else if (report_id == 0x08 && payload_len >= 3) {
                 int raw_load = data[1] | (data[2] << 8);
                 dyn_load_pct = raw_load / 10.0f;

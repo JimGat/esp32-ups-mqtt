@@ -296,7 +296,7 @@ ESP_LOGI(TAG, "📊 TELEMETRY: 0x07 Status Flags = 0x%04X (Power=%s) [RAW: %s]",
             } else if (report_id == 0x08 && payload_len >= 3) {
                 int raw_load = data[1] | (data[2] << 8);
                 dyn_load_pct = raw_load / 10.0f;
-                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load (HID Placeholder) = %.1f%% (raw=%d, APC firmware quirk) [RAW: %s]", dyn_load_pct, raw_load, hex_line);
+                ESP_LOGI(TAG, "📊 TELEMETRY: 0x08 Load (HID Placeholder) = %.1f%% (raw=%d) [RAW: %s]", dyn_load_pct, raw_load, hex_line);
             } else if (report_id == 0x09 && payload_len >= 3) {
                 int raw_val = data[1] | (data[2] << 8);
                 dyn_nominal_flow = raw_val;

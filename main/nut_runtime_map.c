@@ -208,18 +208,26 @@ bool nut_runtime_map_update_from_report(nut_runtime_map_entry_t *entries, size_t
         nut_runtime_map_entry_t *e = &entries[i];
         if (e->report_type == HID_DESC_REPORT_INPUT && e->report_id == report_id) {
             size_t byte_offset = e->bit_offset / 8;
-            if (byte_offset + (e->bit_size / 8) <= data_len) {
+            uint8_t bit_shift = e->bit_offset % 8;
+            
+            // Calculate bytes needed to safely read this field
+            size_t bytes_needed = (e->bit_size + bit_shift + 7) / 8;
+            if (byte_offset + bytes_needed <= data_len) {
                 uint32_t raw_val = 0;
-                if (e->bit_size == 8) {
-                    raw_val = data[byte_offset];
-                } else if (e->bit_size == 16) {
-                    raw_val = data[byte_offset] | (data[byte_offset + 1] << 8);
-                } else if (e->bit_size == 32) {
-                    raw_val = data[byte_offset] | (data[byte_offset + 1] << 8) | 
-                              (data[byte_offset + 2] << 16) | (data[byte_offset + 3] << 24);
+                if (e->bit_size == 1) {
+                    raw_val = (data[byte_offset] >> bit_shift) & 0x01;
+                } else if (e->bit_size <= 8) {
+                    raw_val = (data[byte_offset] >> bit_shift) & 0xFF;
+                } else if (e->bit_size <= 16) {
+                    raw_val = ((data[byte_offset] | (data[byte_offset + 1] << 8)) >> bit_shift);
+                } else if (e->bit_size <= 32) {
+                    raw_val = ((data[byte_offset] | (data[byte_offset + 1] << 8) | 
+                               (data[byte_offset + 2] << 16) | (data[byte_offset + 3] << 24)) >> bit_shift);
                 }
                 
-                e->last_raw_value = raw_val;
+                // Mask to exact bit size
+                uint32_t mask = (e->bit_size < 32) ? ((1U << e->bit_size) - 1) : 0xFFFFFFFF;
+                e->last_raw_value = raw_val & mask;
                 e->has_value = true;
                 updated = true;
             }

@@ -83,4 +83,8 @@ size_t nut_runtime_map_entry_to_json(const nut_runtime_map_entry_t *entry, char 
 }
 #endif
 
+
+bool nut_runtime_map_update_from_report(nut_runtime_map_entry_t *entries, size_t entry_count,
+                                        uint8_t report_id, const uint8_t *data, size_t data_len);
+
 #endif /* NUT_RUNTIME_MAP_H */

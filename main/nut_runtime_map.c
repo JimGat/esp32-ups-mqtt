@@ -1,3 +1,4 @@
+#include <math.h>
 #include "nut_runtime_map.h"
 
 #include <stdio.h>
@@ -198,3 +199,32 @@ size_t nut_runtime_map_entry_to_json(const nut_runtime_map_entry_t *entry, char 
     }
     return (size_t)n;
 }
+
+bool nut_runtime_map_update_from_report(nut_runtime_map_entry_t *entries, size_t entry_count,
+                                        uint8_t report_id, const uint8_t *data, size_t data_len)
+{
+    bool updated = false;
+    for (size_t i = 0; i < entry_count; i++) {
+        nut_runtime_map_entry_t *e = &entries[i];
+        if (e->report_type == HID_DESC_REPORT_INPUT && e->report_id == report_id) {
+            size_t byte_offset = e->bit_offset / 8;
+            if (byte_offset + (e->bit_size / 8) <= data_len) {
+                uint32_t raw_val = 0;
+                if (e->bit_size == 8) {
+                    raw_val = data[byte_offset];
+                } else if (e->bit_size == 16) {
+                    raw_val = data[byte_offset] | (data[byte_offset + 1] << 8);
+                } else if (e->bit_size == 32) {
+                    raw_val = data[byte_offset] | (data[byte_offset + 1] << 8) | 
+                              (data[byte_offset + 2] << 16) | (data[byte_offset + 3] << 24);
+                }
+                
+                e->last_raw_value = raw_val;
+                e->has_value = true;
+                updated = true;
+            }
+        }
+    }
+    return updated;
+}
+

@@ -116,6 +116,7 @@ static volatile bool full_hid_descriptor_processed = false;
 static volatile int64_t full_hid_descriptor_process_at_ms = 0;
 static hid_descriptor_field_t full_hid_fields[96];
 static nut_runtime_map_entry_t full_hid_runtime_map[48];
+static size_t full_hid_runtime_map_count = 0;
 static volatile int64_t next_input_report_poll_at_ms = 0;
 static volatile bool input_report_pending = false;
 static const uint8_t poll_reports[] = {0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x12, 0x14};
@@ -223,12 +224,12 @@ static void hid_report_desc_cb(usb_transfer_t *transfer) {
             nut_runtime_map_entry_t runtime_map[32];
             size_t runtime_count = nut_runtime_map_build(fields, field_count,
                                                          runtime_map, sizeof(runtime_map) / sizeof(runtime_map[0]));
-            ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
+            ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)full_hid_runtime_map_count);
             char map_summary[96];
-            snprintf(map_summary, sizeof(map_summary), "nut runtime map entries=%u", (unsigned)runtime_count);
+            snprintf(map_summary, sizeof(map_summary), "nut runtime map entries=%u", (unsigned)full_hid_runtime_map_count);
             usb_debug_record_add(USB_DEBUG_REC_EVENT, 0, 0, NULL, 0, map_summary);
 
-            for (size_t m = 0; m < runtime_count; m++) {
+            for (size_t m = 0; m < full_hid_runtime_map_count; m++) {
                 ESP_LOGI(TAG, "NUT-MAP: %s %s report=0x%02X bit=%u size=%u path=%s",
                          nut_runtime_key_str(runtime_map[m].key),
                          hid_descriptor_report_type_str(runtime_map[m].report_type),
@@ -1579,10 +1580,10 @@ void usb_host_hid_report_descriptor_minimal_task(void *arg)
                 if (hid_descriptor_parse(full_hid_descriptor, full_hid_descriptor_len,
                                          full_hid_fields, sizeof(full_hid_fields) / sizeof(full_hid_fields[0]), &field_count)) {
                     ESP_LOGI(TAG, "NUT-HID: descriptor resolver found %u fields", (unsigned)field_count);
-                    size_t runtime_count = nut_runtime_map_build(full_hid_fields, field_count,
+                    full_hid_runtime_map_count = nut_runtime_map_build(full_hid_fields, field_count,
                                                                  full_hid_runtime_map, sizeof(full_hid_runtime_map) / sizeof(full_hid_runtime_map[0]));
-                    ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)runtime_count);
-                    for (size_t m = 0; m < runtime_count; m++) {
+                    ESP_LOGI(TAG, "NUT-HID: runtime semantic map contains %u entries", (unsigned)full_hid_runtime_map_count);
+                    for (size_t m = 0; m < full_hid_runtime_map_count; m++) {
                         ESP_LOGI(TAG, "NUT-MAP: %s %s report=0x%02X bit=%u size=%u path=%s",
                                  nut_runtime_key_str(full_hid_runtime_map[m].key),
                                  hid_descriptor_report_type_str(full_hid_runtime_map[m].report_type),
